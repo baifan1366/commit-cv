@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Custom tech themed color additions */
+  --color-slate-950: #030712;
+  --color-slate-900: #0f172a;
+  --color-slate-800: #1e293b;
+  --color-slate-700: #334155;
+  --color-slate-600: #475569;
+  --color-slate-500: #64748b;
+  
+  --color-brand-purple: #8b5cf6;
+  --color-brand-cyan: #06b6d4;
+  --color-brand-glow: rgba(139, 92, 246, 0.15);
+}
+
+@layer base {
+  body {
+    background-color: var(--color-slate-950);
+    color: #f8fafc;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Custom scrollbar animations and styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #8b5cf6;
+}
+
+/* Highlighting animations */
+@keyframes skill-shimmer {
+  0% {
+    box-shadow: 0 0 0px var(--color-brand-purple);
+    transform: scale(1);
+    background-color: rgba(139, 92, 246, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.8), 0 0 5px rgba(6, 182, 212, 0.5);
+    transform: scale(1.08);
+    background-color: rgba(139, 92, 246, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0px var(--color-brand-purple);
+    transform: scale(1);
+    background-color: rgba(139, 92, 246, 0.1);
+  }
+}
+
+.animate-skill-glow {
+  animation: skill-shimmer 2.2s ease-in-out infinite;
+}
+
+@keyframes terminal-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  background-color: #38bdf8;
+  margin-left: 4px;
+  animation: terminal-cursor 1s infinite;
+}

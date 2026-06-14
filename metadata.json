@@ -1,0 +1,6 @@
+{
+  "name": "CommitCV",
+  "description": "An AI-powered living resume generator that automatically processes GitHub commits, pull requests, and issues into a professional developer portfolio. Includes an interactive AI chat to tune your resume and real-time push webhook simulation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

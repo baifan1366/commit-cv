@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "Resume": {
+      "title": "Resume",
+      "description": "Living CV developer profile generated from GitHub and tuned by Gemini",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "slogan": { "type": "string" },
+        "summary": { "type": "string" },
+        "skills": { "$ref": "TechSkills" },
+        "projects": { "type": "array" },
+        "openSourceSummary": { "type": "string" },
+        "openSourceContributions": { "type": "array" },
+        "statistics": { "$ref": "Statistics" },
+        "lastUpdated": { "type": "string" },
+        "avatarUrl": { "type": "string" }
+      },
+      "required": ["name", "title", "slogan", "summary", "lastUpdated"]
+    },
+    "TechSkills": {
+      "title": "TechSkills",
+      "description": "Developer's languages, frameworks, databases, and tools",
+      "type": "object",
+      "properties": {
+        "languages": { "type": "array" },
+        "frameworks": { "type": "array" },
+        "databases": { "type": "array" },
+        "tools": { "type": "array" }
+      }
+    },
+    "Statistics": {
+      "title": "Statistics",
+      "description": "Aggregated GitHub stats",
+      "type": "object",
+      "properties": {
+        "repositoriesCount": { "type": "integer" },
+        "commitsCount": { "type": "integer" },
+        "pullRequestsCount": { "type": "integer" },
+        "issuesCount": { "type": "integer" }
+      }
+    }
+  },
+  "firestore": {
+    "/resumes/{username}": {
+      "schema": "Resume",
+      "description": "The resumes keyed by their GitHub username"
+    }
+  }
+}
