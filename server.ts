@@ -11,12 +11,11 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
 
 // Load Firebase Config robustly for Webhook background updating
-const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 const firebaseApp = initializeApp(firebaseConfig, 'serverApp');
 const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
