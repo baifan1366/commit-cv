@@ -79,3 +79,90 @@
   margin-left: 4px;
   animation: terminal-cursor 1s infinite;
 }
+
+/* Scroll Journey Custom Styles */
+.contribution-grid {
+  display: grid;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  grid-auto-flow: column;
+  gap: 3px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.contribution-node {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background-color: rgba(30, 41, 59, 0.4);
+  transition: background-color 0.3s ease;
+}
+
+.contribution-node.level-0 { background-color: rgba(30, 41, 59, 0.4); }
+.contribution-node.level-1 { background-color: rgba(22, 101, 52, 0.4); }
+.contribution-node.level-2 { background-color: rgba(21, 128, 61, 0.6); }
+.contribution-node.level-3 { background-color: rgba(22, 163, 74, 0.8); }
+.contribution-node.level-4 { background-color: rgba(74, 222, 128, 1); }
+
+@keyframes rotate-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes rotate-reverse-slow {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
+.animate-rotate-slow {
+  animation: rotate-slow 20s linear infinite;
+}
+
+.animate-rotate-reverse-slow {
+  animation: rotate-reverse-slow 15s linear infinite;
+}
+
+/* Glow effects for AI Engine Core */
+.ai-core-glow {
+  box-shadow: 0 0 40px rgba(139, 92, 246, 0.4), 0 0 80px rgba(6, 182, 212, 0.2);
+}
+
+.ai-core-glow-active {
+  box-shadow: 0 0 60px rgba(139, 92, 246, 0.8), 0 0 120px rgba(6, 182, 212, 0.4);
+  filter: saturate(1.2);
+}
+
+/* Section styling for smooth pinning */
+.scroll-section {
+  position: relative;
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  padding: 4rem 1rem;
+}
+
+/* Custom fade transitions */
+.fade-in-up {
+  opacity: 0;
+  transform: translateY(30px);
+}
+
+@keyframes scale-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-scaleIn {
+  animation: scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
