@@ -24,8 +24,51 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
+const GITHUB_TIMEOUT_MS = Number(process.env.GITHUB_TIMEOUT_MS || 12000);
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 15000);
 
 app.use(express.json());
+
+async function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout>;
+  const timeoutError = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s: ${input}`);
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(timeoutError);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fetch(input, {
+      ...init,
+      signal: init.signal || controller.signal
+    }), timeoutPromise]);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readResponseTextWithTimeout(response: Response, label: string, timeoutMs = 15000) {
+  let timeout: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`Response body timed out after ${Math.round(timeoutMs / 1000)}s: ${label}`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([response.text(), timeoutPromise]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // --- OPENROUTER INTEGRATION ---
 async function callOpenRouter(systemInstruction: string, promptText: string, requireJson: boolean = false) {
@@ -36,7 +79,7 @@ async function callOpenRouter(systemInstruction: string, promptText: string, req
     throw new Error('OpenRouter API Key is currently set to placeholder. Please configure your OPENROUTER_API_KEY.');
   }
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -52,14 +95,15 @@ async function callOpenRouter(systemInstruction: string, promptText: string, req
       ],
       response_format: requireJson ? { type: 'json_object' } : undefined
     })
-  });
+  }, OPENROUTER_TIMEOUT_MS);
 
   if (!response.ok) {
-    const errText = await response.text();
+    const errText = await readResponseTextWithTimeout(response, 'OpenRouter error response', OPENROUTER_TIMEOUT_MS);
     throw new Error(`OpenRouter API error (status ${response.status}): ${errText}`);
   }
 
-  const responseData = await response.json();
+  const responseText = await readResponseTextWithTimeout(response, 'OpenRouter completion response', OPENROUTER_TIMEOUT_MS);
+  const responseData = JSON.parse(responseText);
   const content = responseData.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error('OpenRouter returned an empty completion response.');
@@ -111,7 +155,7 @@ app.get(['/api/auth/github/callback', '/api/auth/github/callback/'], async (req,
   }
 
   try {
-    const response = await fetch('https://github.com/login/oauth/access_token', {
+    const response = await fetchWithTimeout('https://github.com/login/oauth/access_token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -123,7 +167,7 @@ app.get(['/api/auth/github/callback', '/api/auth/github/callback/'], async (req,
         code,
         redirect_uri: redirectUri,
       }),
-    });
+    }, GITHUB_TIMEOUT_MS);
 
     const data = await response.json();
 
@@ -523,6 +567,7 @@ function applyFallbackChatEdits(currentResume: any, message: string): { updatedR
 // --- REAL AI ANALYZER (NO FALLBACKS OR SANDBOX ARRAYS) ---
 
 app.post('/api/github/analyze', async (req, res) => {
+  const startedAt = Date.now();
   const { token, username: inputUsername } = req.body;
 
   if (!token && !inputUsername) {
@@ -548,16 +593,21 @@ app.post('/api/github/analyze', async (req, res) => {
       console.log('Fetching live OAuth GitHub user details...');
       headers['Authorization'] = `Bearer ${token}`;
 
-      const userRes = await fetch('https://api.github.com/user', { headers });
+      const userRes = await fetchWithTimeout('https://api.github.com/user', { headers }, GITHUB_TIMEOUT_MS);
       if (!userRes.ok) {
         throw new Error(`Failed to resolve GitHub account info with token: ${userRes.statusText}`);
       }
       const userObj = await userRes.json();
       displayUsername = userObj.name || userObj.login || 'GitHub Architect';
       userAvatarUrl = userObj.avatar_url || '';
+      console.log(`[analyze] OAuth user loaded in ${Date.now() - startedAt}ms`);
 
-      // Get authenticated user's repositories
-      const reposRes = await fetch('https://api.github.com/user/repos?sort=updated&per_page=15&type=owner', { headers });
+      const loginName = userObj.login;
+      const [reposRes, eventsRes] = await Promise.all([
+        fetchWithTimeout('https://api.github.com/user/repos?sort=updated&per_page=15&type=owner', { headers }, GITHUB_TIMEOUT_MS),
+        fetchWithTimeout(`https://api.github.com/users/${loginName}/events?per_page=35`, { headers }, GITHUB_TIMEOUT_MS)
+      ]);
+
       const reposData = reposRes.ok ? await reposRes.json() : [];
       if (Array.isArray(reposData)) {
         activity.repositories = reposData.map((r: any) => ({
@@ -570,11 +620,9 @@ app.post('/api/github/analyze', async (req, res) => {
         }));
       }
 
-      // Get events
-      const loginName = userObj.login;
-      const eventsRes = await fetch(`https://api.github.com/users/${loginName}/events?per_page=35`, { headers });
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
       parseEvents(eventsData, activity);
+      console.log(`[analyze] OAuth activity loaded in ${Date.now() - startedAt}ms`);
 
     } else if (inputUsername) {
       const cleanedUser = inputUsername.trim().replace(/@/g, '');
@@ -585,16 +633,20 @@ app.post('/api/github/analyze', async (req, res) => {
         headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
       }
 
-      const userRes = await fetch(`https://api.github.com/users/${cleanedUser}`, { headers });
+      const userRes = await fetchWithTimeout(`https://api.github.com/users/${cleanedUser}`, { headers }, GITHUB_TIMEOUT_MS);
       if (!userRes.ok) {
         throw new Error(`The GitHub user "${cleanedUser}" could not be found. Please double-check spelling.`);
       }
       const userObj = await userRes.json();
       displayUsername = userObj.name || userObj.login || cleanedUser;
       userAvatarUrl = userObj.avatar_url || '';
+      console.log(`[analyze] Public user loaded in ${Date.now() - startedAt}ms`);
 
-      // Get up to 15 public repositories
-      const reposRes = await fetch(`https://api.github.com/users/${cleanedUser}/repos?sort=updated&per_page=15`, { headers });
+      const [reposRes, eventsRes] = await Promise.all([
+        fetchWithTimeout(`https://api.github.com/users/${cleanedUser}/repos?sort=updated&per_page=15`, { headers }, GITHUB_TIMEOUT_MS),
+        fetchWithTimeout(`https://api.github.com/users/${cleanedUser}/events?per_page=35`, { headers }, GITHUB_TIMEOUT_MS)
+      ]);
+
       if (!reposRes.ok) {
         throw new Error(`Could not access public repositories for "${cleanedUser}": API rate limit or error.`);
       }
@@ -610,10 +662,9 @@ app.post('/api/github/analyze', async (req, res) => {
         }));
       }
 
-      // Get events
-      const eventsRes = await fetch(`https://api.github.com/users/${cleanedUser}/events?per_page=35`, { headers });
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
       parseEvents(eventsData, activity);
+      console.log(`[analyze] Public activity loaded in ${Date.now() - startedAt}ms`);
     }
 
     if (activity.repositories.length === 0) {
@@ -684,12 +735,14 @@ Return EXACTLY a JSON format mapping this strict schema:
 
     let resumeObj: any;
     try {
+      console.log(`[analyze] Calling OpenRouter after ${Date.now() - startedAt}ms`);
       const parsedJsonStr = await callOpenRouter(systemInstruction, promptText, true);
       if (!parsedJsonStr) {
         throw new Error('OpenRouter failed to extract profile structural information.');
       }
 
       resumeObj = JSON.parse(parsedJsonStr);
+      console.log(`[analyze] OpenRouter completed in ${Date.now() - startedAt}ms`);
     } catch (openRouterError: any) {
       console.warn('OpenRouter query error, executing high-fidelity fallback parser:', openRouterError.message || openRouterError);
       resumeObj = generateFallbackResume(displayUsername, activity);

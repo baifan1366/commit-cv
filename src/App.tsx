@@ -66,6 +66,7 @@ export default function App() {
   const [copiedCallbackUrl, setCopiedCallbackUrl] = useState<boolean>(false);
   const [copiedHomepageUrl, setCopiedHomepageUrl] = useState<boolean>(false);
   const [showTryItOutModal, setShowTryItOutModal] = useState<boolean>(false);
+  const [firestoreAvailable, setFirestoreAvailable] = useState<boolean>(true);
 
   // Auto scroll chat to bottom
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -312,7 +313,7 @@ export default function App() {
 
   // Real-time listener for Firestore push updates
   useEffect(() => {
-    if (!githubUsername) return;
+    if (!githubUsername || !firestoreAvailable) return;
     
     const cleanUsernameLower = githubUsername.trim().replace(/@/g, '').toLowerCase();
     const docRef = doc(db, 'resumes', cleanUsernameLower);
@@ -355,10 +356,13 @@ export default function App() {
       }
     }, (error) => {
       console.error("Firestore live listener failed:", error);
+      if (error?.code === 'permission-denied') {
+        setFirestoreAvailable(false);
+      }
     });
     
     return () => unsubscribe();
-  }, [githubUsername]);
+  }, [githubUsername, firestoreAvailable]);
 
   // Set up real GitHub OAuth Login Flow
   const handleGithubConnect = async () => {
@@ -401,7 +405,7 @@ export default function App() {
     const cleanUsernameLower = targetUsername.toLowerCase();
 
     // Check Firestore first
-    if (!forceReload && cleanUsernameLower) {
+    if (firestoreAvailable && !forceReload && cleanUsernameLower) {
       try {
         const docRef = doc(db, 'resumes', cleanUsernameLower);
         const docSnap = await getDoc(docRef);
@@ -422,6 +426,9 @@ export default function App() {
         }
       } catch (err) {
         console.warn("Failed to retrieve cached profile from Firebase Firestore, pulling from live API:", err);
+        if ((err as any)?.code === 'permission-denied') {
+          setFirestoreAvailable(false);
+        }
       }
     }
 
@@ -442,10 +449,15 @@ export default function App() {
         const finalUsername = (targetUsername || data.username || data.resume.name).trim().replace(/@/g, '');
         if (finalUsername) {
           setGithubUsername(finalUsername);
-          try {
-            await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), data.resume);
-          } catch (firebaseErr: any) {
-            console.error("Failed to sync resume to Firebase Firestore:", firebaseErr);
+          if (firestoreAvailable) {
+            try {
+              await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), data.resume);
+            } catch (firebaseErr: any) {
+              console.error("Failed to sync resume to Firebase Firestore:", firebaseErr);
+              if (firebaseErr?.code === 'permission-denied') {
+                setFirestoreAvailable(false);
+              }
+            }
           }
         }
 
@@ -504,11 +516,14 @@ export default function App() {
 
         // Persist the updated resume state to Firestore
         const finalUsername = (githubUsername || data.updatedResume.name).trim().replace(/@/g, '');
-        if (finalUsername) {
+        if (firestoreAvailable && finalUsername) {
           try {
             await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), data.updatedResume);
           } catch (firebaseErr: any) {
             console.error("Failed to sync edited updates to Firebase Firestore:", firebaseErr);
+            if (firebaseErr?.code === 'permission-denied') {
+              setFirestoreAvailable(false);
+            }
           }
         }
 
