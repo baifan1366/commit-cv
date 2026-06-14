@@ -3,12 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
-import fs from 'fs';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
@@ -19,15 +14,59 @@ dotenv.config();
 const firebaseApp = initializeApp(firebaseConfig, 'serverApp');
 const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const app = express();
 const PORT = 3000;
 const GITHUB_TIMEOUT_MS = Number(process.env.GITHUB_TIMEOUT_MS || 12000);
-const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 15000);
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 120000); // 2 minutes default
 
-app.use(express.json());
+type ApiRequest = {
+  method?: string;
+  url?: string;
+  query: Record<string, any>;
+  body: any;
+};
+
+type ApiResponse = {
+  status: (statusCode: number) => ApiResponse;
+  json: (body: any) => void;
+  send: (body: any) => void;
+  setHeader?: (name: string, value: string) => void;
+};
+
+type ApiHandler = (req: ApiRequest, res: ApiResponse) => unknown | Promise<unknown>;
+
+const routes: Array<{ method: string; path: string; handler: ApiHandler }> = [];
+
+const app = {
+  get(paths: string | string[], handler: ApiHandler) {
+    for (const routePath of Array.isArray(paths) ? paths : [paths]) {
+      routes.push({ method: 'GET', path: normalizePath(routePath), handler });
+    }
+  },
+  post(paths: string | string[], handler: ApiHandler) {
+    for (const routePath of Array.isArray(paths) ? paths : [paths]) {
+      routes.push({ method: 'POST', path: normalizePath(routePath), handler });
+    }
+  }
+};
+
+function normalizePath(pathname: string) {
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    return pathname.slice(0, -1);
+  }
+  return pathname;
+}
+
+export async function handleApiRequest(req: ApiRequest, res: ApiResponse) {
+  const host = req.url?.startsWith('http') ? undefined : 'http://localhost';
+  const pathname = normalizePath(new URL(req.url || '/', host).pathname);
+  const route = routes.find((candidate) => candidate.method === req.method && candidate.path === pathname);
+
+  if (!route) {
+    return res.status(404).json({ error: `No API route found for ${req.method} ${pathname}` });
+  }
+
+  return route.handler(req, res);
+}
 
 async function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -1019,8 +1058,29 @@ Repository: ${repoName}
 Pushed commits: "${commitMessageString}"`;
 
     let gptOutput: any = {};
-    const responseText = await callOpenRouter(systemInstruction, promptText, true);
-    gptOutput = cleanAndParseJSON(responseText);
+    try {
+      const responseText = await callOpenRouter(systemInstruction, promptText, true);
+      gptOutput = cleanAndParseJSON(responseText);
+    } catch (openRouterError: any) {
+      console.warn('OpenRouter webhook error, executing local push fallback:', openRouterError.message || openRouterError);
+      const beforeSkills = new Set([
+        ...(currentResume.skills?.languages || []),
+        ...(currentResume.skills?.frameworks || []),
+        ...(currentResume.skills?.databases || []),
+        ...(currentResume.skills?.tools || [])
+      ]);
+      const fallback = applyFallbackChatEdits(currentResume, commitMessageString);
+      const afterSkills = [
+        ...(fallback.updatedResume.skills?.languages || []),
+        ...(fallback.updatedResume.skills?.frameworks || []),
+        ...(fallback.updatedResume.skills?.databases || []),
+        ...(fallback.updatedResume.skills?.tools || [])
+      ];
+      gptOutput = {
+        updatedResume: fallback.updatedResume,
+        newlyIdentifiedSkills: afterSkills.filter((skill) => !beforeSkills.has(skill))
+      };
+    }
 
     const updatedResume = gptOutput.updatedResume || currentResume;
     const newlyIdentifiedSkills = gptOutput.newlyIdentifiedSkills || [];
@@ -1028,6 +1088,12 @@ Pushed commits: "${commitMessageString}"`;
     // Enforce dynamic timestamps on push
     updatedResume.lastUpdated = `Push to ${repoName} updated CV`;
     updatedResume.avatarUrl = updatedResume.avatarUrl || currentResume.avatarUrl || '';
+    updatedResume.latestPush = updatedResume.latestPush || {
+      repository: repoName,
+      commitMessage: commitMessageString.split('\n')[0] || commitMessageString,
+      timestamp: new Date().toLocaleString(),
+      addedSkills: newlyIdentifiedSkills
+    };
     
     // Write back to Firestore
     await setDoc(resumeDocRef, updatedResume);
@@ -1047,31 +1113,4 @@ Pushed commits: "${commitMessageString}"`;
   }
 });
 
-
-// --- MOUNT VITE MIDDLEWARE ---
-
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`CommitCV server active on port ${PORT}`);
-  });
-}
-
-if (!process.env.VERCEL) {
-  startServer();
-}
-
-export default app;
+export default handleApiRequest;

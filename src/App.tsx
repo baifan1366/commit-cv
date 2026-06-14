@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Github, 
   GitBranch, 
@@ -67,6 +67,17 @@ export default function App() {
   const [copiedHomepageUrl, setCopiedHomepageUrl] = useState<boolean>(false);
   const [showTryItOutModal, setShowTryItOutModal] = useState<boolean>(false);
   const [firestoreAvailable, setFirestoreAvailable] = useState<boolean>(true);
+
+  // Memoize contribution grid cells to prevent re-renders that conflict with GSAP
+  const contributionCells = useMemo(() => 
+    Array.from({ length: 350 }).map((_, i) => {
+      const level = Math.random() > 0.85 ? Math.floor(Math.random() * 4) + 1 : 0;
+      return {
+        id: i,
+        level,
+      };
+    }),
+  []);
 
   // Auto scroll chat to bottom
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -137,44 +148,68 @@ export default function App() {
   }, []);
 
   // GSAP ScrollTrigger Landing Page Animations
+  // Only run when resume is null (landing page mode)
   useEffect(() => {
-    if (resume) return;
+    console.log('[GSAP Effect] Running, resume=', !!resume);
+    
+    if (resume) {
+      console.log('[GSAP Effect] Skipping - resume exists');
+      return;
+    }
 
-    const timer = setTimeout(() => {
-      const ctx = gsap.context(() => {
+    // Ensure we're in browser environment
+    if (typeof window === 'undefined') return;
+
+    let isMounted = true;
+    let ctx: gsap.Context | null = null;
+    
+    // Use requestAnimationFrame to ensure DOM is ready
+    const rafId = requestAnimationFrame(() => {
+      if (!isMounted) {
+        console.log('[GSAP Effect] Aborted - component unmounted');
+        return;
+      }
+      
+      console.log('[GSAP Effect] Starting GSAP context');
+      
+      ctx = gsap.context(() => {
         // Section 1: Hero Animations
-        gsap.from(".hero-title", {
-          y: 100,
-          opacity: 0,
+        gsap.set(".hero-title", { y: 100, opacity: 0 });
+        gsap.set(".hero-subtitle", { y: 50, opacity: 0 });
+        gsap.set(".hero-scroll-indicator", { opacity: 0 });
+        
+        gsap.to(".hero-title", {
+          y: 0,
+          opacity: 1,
           duration: 1,
           ease: "power3.out"
         });
 
-        gsap.from(".hero-subtitle", {
-          y: 50,
-          opacity: 0,
+        gsap.to(".hero-subtitle", {
+          y: 0,
+          opacity: 1,
           duration: 1,
           delay: 0.3,
           ease: "power3.out"
         });
 
-        gsap.from(".hero-scroll-indicator", {
-          opacity: 0,
+        gsap.to(".hero-scroll-indicator", {
+          opacity: 1,
           duration: 1,
           delay: 0.8
         });
 
         // Contribution nodes stagger color updates
-        const cells = gsap.utils.toArray('.contribution-node-cell');
+        const cells = document.querySelectorAll('.contribution-node-cell');
         if (cells.length > 0) {
           gsap.to(cells, {
             backgroundColor: () => {
               const rand = Math.random();
-              if (rand > 0.96) return '#4ade80'; // level 4
-              if (rand > 0.90) return '#22c55e'; // level 3
-              if (rand > 0.80) return '#15803d'; // level 2
-              if (rand > 0.65) return '#166534'; // level 1
-              return 'rgba(30, 41, 59, 0.4)'; // level 0
+              if (rand > 0.96) return '#4ade80';
+              if (rand > 0.90) return '#22c55e';
+              if (rand > 0.80) return '#15803d';
+              if (rand > 0.65) return '#166534';
+              return 'rgba(30, 41, 59, 0.4)';
             },
             duration: 1.5,
             stagger: {
@@ -187,6 +222,8 @@ export default function App() {
         }
 
         // Section 2: The Problem ScrollTrigger
+        gsap.set(".problem-answer", { opacity: 0, y: 20 });
+        
         const problemTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".problem-section",
@@ -210,6 +247,8 @@ export default function App() {
         }, "-=0.2");
 
         // Section 3: GitHub Connect ScrollTrigger
+        gsap.set(".connect-floating", { opacity: 0 });
+        
         const connectTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".connect-section",
@@ -219,7 +258,6 @@ export default function App() {
           }
         });
 
-        // 1. Elements fly in from sides
         connectTl.to(".connect-floating", {
           x: 0,
           opacity: 1,
@@ -227,7 +265,6 @@ export default function App() {
           duration: 1
         });
 
-        // 2. Elements get sucked into AI Core
         connectTl.to(".connect-floating", {
           scale: 0.1,
           left: "50%",
@@ -239,48 +276,63 @@ export default function App() {
           stagger: 0.05
         });
 
-        // 3. AI Core flashes / glows when elements are sucked in
         connectTl.to(".ai-core", {
           boxShadow: "0 0 80px rgba(139, 92, 246, 0.9), 0 0 160px rgba(6, 182, 212, 0.6)",
           scale: 1.15,
           duration: 0.4
         }, "-=0.2");
 
-        // Section 4: AI Analysis ScrollTrigger (PINNED)
+        // Section 4: AI Analysis ScrollTrigger 
+        // NOTE: Removed 'pin' to avoid React 19 DOM conflicts
+        gsap.set('[data-commit="redis"]', { opacity: 0.2, scale: 1 });
+        gsap.set('[data-commit="jwt"]', { opacity: 0.2, scale: 1 });
+        gsap.set('[data-commit="docker"]', { opacity: 0.2, scale: 1 });
+        gsap.set('[data-skill="redis"]', { opacity: 0, scale: 0.5 });
+        gsap.set('[data-skill="jwt"]', { opacity: 0, scale: 0.5 });
+        gsap.set('[data-skill="docker"]', { opacity: 0, scale: 0.5 });
+        gsap.set('.analysis-scorecard', { opacity: 0.2 });
+        gsap.set('[data-progress="82"]', { width: "0%" });
+        gsap.set('[data-progress="74"]', { width: "0%" });
+        gsap.set('[data-progress="58"]', { width: "0%" });
+        
         const analysisTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".analysis-section",
-            start: "top top",
-            end: "+=1500",
-            pin: true,
+            start: "top center",
+            end: "bottom center",
             scrub: true
           }
         });
 
-        // Commit 1 highlighted, skill tag 1 pops out, score card lights up a bit
         analysisTl.to('[data-commit="redis"]', { opacity: 1, scale: 1.05, duration: 0.5 })
                   .to('[data-skill="redis"]', { opacity: 1, scale: 1.15, duration: 0.5 }, "-=0.2")
                   .to('[data-skill="redis"]', { y: 80, x: 20, opacity: 0, scale: 0.4, duration: 0.8 }) 
                   .to('.analysis-scorecard', { opacity: 0.4, duration: 0.2 }, "-=0.8");
 
-        // Commit 2 highlighted, skill tag 2 pops out
         analysisTl.to('[data-commit="jwt"]', { opacity: 1, scale: 1.05, duration: 0.5 })
                   .to('[data-skill="jwt"]', { opacity: 1, scale: 1.15, duration: 0.5 }, "-=0.2")
                   .to('[data-skill="jwt"]', { y: 20, x: -50, opacity: 0, scale: 0.4, duration: 0.8 })
                   .to('.analysis-scorecard', { opacity: 0.7, duration: 0.2 }, "-=0.8");
 
-        // Commit 3 highlighted, skill tag 3 pops out
         analysisTl.to('[data-commit="docker"]', { opacity: 1, scale: 1.05, duration: 0.5 })
                   .to('[data-skill="docker"]', { opacity: 1, scale: 1.15, duration: 0.5 }, "-=0.2")
                   .to('[data-skill="docker"]', { y: -40, x: 0, opacity: 0, scale: 0.4, duration: 0.8 })
                   .to('.analysis-scorecard', { opacity: 1, duration: 0.2 }, "-=0.8");
 
-        // Finally, progress bars fill up
         analysisTl.to('[data-progress="82"]', { width: "82%", duration: 1 })
                   .to('[data-progress="74"]', { width: "74%", duration: 1 }, "-=0.8")
                   .to('[data-progress="58"]', { width: "58%", duration: 1 }, "-=0.8");
 
         // Section 5: Living Resume ScrollTrigger
+        gsap.set('[data-activity="docker"]', { opacity: 0.3 });
+        gsap.set('[data-activity="redis"]', { opacity: 0.3 });
+        gsap.set('[data-activity="cicd"]', { opacity: 0.3 });
+        gsap.set('[data-resume-skill="docker"]', { opacity: 0, scale: 0.5 });
+        gsap.set('[data-resume-skill="redis"]', { opacity: 0, scale: 0.5 });
+        gsap.set('[data-resume-skill="cicd"]', { opacity: 0, scale: 0.5 });
+        gsap.set('[data-highlight="docker"]', { opacity: 0 });
+        gsap.set('[data-highlight="redis"]', { opacity: 0 });
+        
         const livingTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".living-resume-section",
@@ -290,25 +342,36 @@ export default function App() {
           }
         });
 
-        // Step 1: Docker activity lights up, docker skill is added, docker experience highlight is shown
         livingTl.to('[data-activity="docker"]', { opacity: 1, duration: 0.5 })
                 .to('[data-resume-skill="docker"]', { opacity: 1, scale: 1, duration: 0.5 }, "-=0.2")
                 .to('[data-highlight="docker"]', { opacity: 1, duration: 0.3 }, "-=0.1");
 
-        // Step 2: Redis activity lights up, redis skill is added, redis experience highlight is shown
         livingTl.to('[data-activity="redis"]', { opacity: 1, duration: 0.5 })
                 .to('[data-resume-skill="redis"]', { opacity: 1, scale: 1, duration: 0.5 }, "-=0.2")
                 .to('[data-highlight="redis"]', { opacity: 1, duration: 0.3 }, "-=0.1");
 
-        // Step 3: CI/CD activity lights up, CI/CD skill is added
         livingTl.to('[data-activity="cicd"]', { opacity: 1, duration: 0.5 })
                 .to('[data-resume-skill="cicd"]', { opacity: 1, scale: 1, duration: 0.5 }, "-=0.2");
       });
+    });
 
-      return () => ctx.revert();
-    }, 100);
-
-    return () => clearTimeout(timer);
+    return () => {
+      console.log('[GSAP Effect] Cleanup starting, isMounted=', isMounted, 'ctx=', !!ctx);
+      isMounted = false;
+      cancelAnimationFrame(rafId);
+      
+      // Kill all ScrollTriggers first
+      const triggers = ScrollTrigger.getAll();
+      console.log('[GSAP Effect] Killing', triggers.length, 'ScrollTriggers');
+      triggers.forEach((trigger) => trigger.kill());
+      
+      // Then revert the GSAP context
+      if (ctx) {
+        console.log('[GSAP Effect] Reverting GSAP context');
+        ctx.revert();
+      }
+      console.log('[GSAP Effect] Cleanup complete');
+    };
   }, [resume]);
 
   // Real-time listener for Firestore push updates
@@ -696,19 +759,16 @@ export default function App() {
             
             {/* Section 1 - Hero */}
             <section className="scroll-section hero-section flex flex-col justify-center items-center relative min-h-screen text-center py-12 overflow-hidden w-full">
-              {/* Contribution Graph background */}
+              {/* Contribution Graph background - using stable memoized cells */}
               <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none select-none z-0">
                 <div className="contribution-grid grid grid-rows-7 grid-flow-col gap-1.5 p-4 max-w-full rotate-[-12deg] scale-150">
-                  {Array.from({ length: 350 }).map((_, i) => {
-                    const level = Math.random() > 0.85 ? Math.floor(Math.random() * 4) + 1 : 0;
-                    return (
-                      <div 
-                        key={i} 
-                        className={`contribution-node level-${level} contribution-node-cell`} 
-                        data-index={i}
-                      />
-                    );
-                  })}
+                  {contributionCells.map((cell) => (
+                    <div 
+                      key={cell.id} 
+                      className={`contribution-node level-${cell.level} contribution-node-cell`} 
+                      data-index={cell.id}
+                    />
+                  ))}
                 </div>
               </div>
 

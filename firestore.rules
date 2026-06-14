@@ -20,8 +20,7 @@ service cloud.firestore {
 
     // Resumes match block
     match /resumes/{username} {
-      allow get: if isValidId(username);
-      allow list: if false; // List queries are denied to prevent scraping; lookups are direct by ID
+      allow read: if isValidId(username); // Allows get, list, and onSnapshot listeners
       allow create, update: if isValidId(username) && isValidResume(incoming());
       allow delete: if false;
     }
