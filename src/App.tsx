@@ -62,6 +62,9 @@ export default function App() {
   const [customCommitMessage, setCustomCommitMessage] = useState<string>('feat: add Redis cache, Dockerize application, design REST APIs');
   const [simulating, setSimulating] = useState<boolean>(false);
   const [copiedWebhookUrl, setCopiedWebhookUrl] = useState<boolean>(false);
+  const [showSetupGuide, setShowSetupGuide] = useState<boolean>(false);
+  const [copiedCallbackUrl, setCopiedCallbackUrl] = useState<boolean>(false);
+  const [copiedHomepageUrl, setCopiedHomepageUrl] = useState<boolean>(false);
   const [showTryItOutModal, setShowTryItOutModal] = useState<boolean>(false);
 
   // Auto scroll chat to bottom
