@@ -91,6 +91,25 @@ export default function App() {
     }
   }, [resume, showTryItOutModal]);
 
+  // DEBUG: Monitor resume state changes
+  useEffect(() => {
+    console.log('==============================================');
+    console.log('[RESUME STATE CHANGE] 🔄 Resume state updated!');
+    console.log('[RESUME STATE CHANGE] - Has resume:', !!resume);
+    if (resume) {
+      console.log('[RESUME STATE CHANGE] - Resume name:', resume.name);
+      console.log('[RESUME STATE CHANGE] - Resume title:', resume.title);
+      console.log('[RESUME STATE CHANGE] - Projects count:', resume.projects?.length);
+      console.log('[RESUME STATE CHANGE] - Last updated:', resume.lastUpdated);
+    } else {
+      console.log('[RESUME STATE CHANGE] - Resume is NULL/UNDEFINED');
+    }
+    console.log('[RESUME STATE CHANGE] - Current loading state:', loading);
+    console.log('[RESUME STATE CHANGE] - Current publicScanLoading state:', publicScanLoading);
+    console.log('[RESUME STATE CHANGE] - This should trigger re-render and show workspace');
+    console.log('==============================================');
+  }, [resume]);
+
   // Update relative time display every minute
   useEffect(() => {
     if (!resume || typeof resume.lastUpdated !== 'number') return;
@@ -822,7 +841,16 @@ export default function App() {
         message: err.message,
         stack: err.stack
       });
-      setErrorBanner(err.message || 'Analysis failed. Make sure the username has active repositories, and check if your OpenRouter credentials are fully set up!');
+      
+      // Set user-friendly error message
+      let errorMessage = err.message || 'Analysis failed. Please try again.';
+      
+      // Special handling for "no public repositories" error
+      if (err.message && err.message.includes('no public repositories')) {
+        errorMessage = `⚠️ Unable to analyze GitHub profile: This account has no public repositories.\n\nPlease try a different username with public repositories, or make sure the username is correct.`;
+      }
+      
+      setErrorBanner(errorMessage);
       setAnalysisProgress('');
     } finally {
       console.log('==============================================');
@@ -951,13 +979,31 @@ export default function App() {
   };
 
   const persistResume = async (updatedResume: CommitCVResume) => {
+    console.log('[persistResume] 💾 Function called');
     const finalUsername = (githubUsername || updatedResume.name).trim().replace(/@/g, '');
-    if (!firestoreAvailable || !finalUsername) return;
+    console.log('[persistResume] - Username:', finalUsername);
+    console.log('[persistResume] - firestoreAvailable:', firestoreAvailable);
+    
+    if (!firestoreAvailable || !finalUsername) {
+      console.log('[persistResume] ⚠️ Skipping - Firestore not available or no username');
+      return;
+    }
+    
     try {
+      console.log('[persistResume] Saving to Firestore path:', `resumes/${finalUsername.toLowerCase()}`);
+      const startTime = Date.now();
+      
       await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), updatedResume);
+      
+      const endTime = Date.now();
+      console.log('[persistResume] ✅ Successfully saved in', (endTime - startTime) / 1000, 'seconds');
     } catch (firebaseErr: any) {
-      console.error('Failed to sync resume to Firebase Firestore:', firebaseErr);
+      console.error('[persistResume] ❌ Failed to sync resume to Firebase Firestore:', firebaseErr);
+      console.error('[persistResume] Error code:', firebaseErr?.code);
+      console.error('[persistResume] Error message:', firebaseErr?.message);
+      
       if (firebaseErr?.code === 'permission-denied') {
+        console.log('[persistResume] Disabling Firestore due to permission error');
         setFirestoreAvailable(false);
       }
       throw firebaseErr;
@@ -1124,17 +1170,37 @@ export default function App() {
   }, [isAuthenticated, githubToken, resume]);
 
   const handleFormatChange = async (formatId: ResumeFormatId) => {
-    if (!resume || formatId === selectedFormat) return;
+    console.log('[handleFormatChange] 🎨 Format change requested');
+    console.log('[handleFormatChange] - New format:', formatId);
+    console.log('[handleFormatChange] - Current format:', selectedFormat);
+    console.log('[handleFormatChange] - Has resume:', !!resume);
+    
+    if (!resume || formatId === selectedFormat) {
+      console.log('[handleFormatChange] ⚠️ Skipping - no resume or same format');
+      return;
+    }
+    
     setSelectedFormat(formatId);
+    console.log('[handleFormatChange] - Selected format updated to:', formatId);
+    
     const updatedResume: CommitCVResume = {
       ...resume,
       resumeFormat: formatId,
       lastUpdated: Date.now(),
     };
     setResume(updatedResume);
+    console.log('[handleFormatChange] - Resume state updated with new format');
+    
     try {
+      console.log('[handleFormatChange] Calling persistResume...');
       await persistResume(updatedResume);
-    } catch {
+      console.log('[handleFormatChange] ✅ Format saved successfully');
+    } catch (err: any) {
+      console.error('[handleFormatChange] ❌ Failed to persist format change:', err);
+      console.error('[handleFormatChange] Error details:', {
+        code: err?.code,
+        message: err?.message
+      });
       setErrorBanner('Failed to save resume format to Firestore. Please try again.');
     }
   };
@@ -1431,19 +1497,21 @@ export default function App() {
         )}
         
         {errorBanner && (
-          <div className="mx-auto w-full max-w-2xl mb-6 bg-slate-900 border border-red-900/50 text-slate-100 p-4 rounded-xl flex items-start gap-3 relative shadow-xl shadow-red-950/25">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5 animate-pulse" />
-            <div className="flex-1 text-xs md:text-sm">
-              <p className="font-display font-semibold text-red-400 mb-1">Authenticating/Scanning Notice</p>
-              <p className="text-slate-300 leading-relaxed font-mono">{errorBanner}</p>
-              <div className="mt-2 text-xs text-slate-400 font-sans border-t border-slate-800 pt-2 flex flex-col gap-1">
-                <span>💡 <strong>Config Tip</strong>: Setup <code>OPENROUTER_API_KEY</code> and <code>GITHUB_CLIENT_ID</code> inside security secrets in real hosting context.</span>
-                <span>💡 <strong>IFrame Tip</strong>: If browser blocks popups inside this sandbox iframe, click the <strong>Development App URL</strong> at the top to open this app directly in a full browser tab!</span>
-              </div>
+          <div className="mx-auto w-full max-w-2xl mb-6 bg-red-950/30 border-2 border-red-500/50 text-slate-100 p-5 rounded-xl flex items-start gap-4 relative shadow-2xl shadow-red-900/40 animate-[fadeIn_0.3s_ease-in]">
+            <AlertCircle className="w-6 h-6 text-red-400 shrink-0 mt-0.5 animate-pulse" />
+            <div className="flex-1 text-sm">
+              <p className="font-display font-bold text-red-400 mb-2 text-base">⚠️ Error Notice</p>
+              <p className="text-slate-200 leading-relaxed whitespace-pre-line">{errorBanner}</p>
+              {!errorBanner.includes('no public repositories') && (
+                <div className="mt-3 text-xs text-slate-400 font-sans border-t border-red-900/30 pt-3 flex flex-col gap-1.5">
+                  <span>💡 <strong>Config Tip</strong>: Setup <code className="bg-slate-900/50 px-1 py-0.5 rounded">OPENROUTER_API_KEY</code> and <code className="bg-slate-900/50 px-1 py-0.5 rounded">GITHUB_CLIENT_ID</code> inside security secrets in real hosting context.</span>
+                  <span>💡 <strong>IFrame Tip</strong>: If browser blocks popups inside this sandbox iframe, click the <strong>Development App URL</strong> at the top to open this app directly in a full browser tab!</span>
+                </div>
+              )}
             </div>
             <button 
               onClick={() => setErrorBanner(null)}
-              className="text-slate-400 hover:text-white text-xs font-mono px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition shrink-0 self-start"
+              className="text-slate-400 hover:text-white text-sm font-mono px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 transition shrink-0 self-start border border-slate-700 hover:border-slate-600"
             >
               ✕
             </button>
@@ -2068,6 +2136,20 @@ export default function App() {
                   <div className="flex-1">
                     <p className="text-sm font-semibold text-white mb-1">Analyzing GitHub Profile</p>
                     <p className="text-xs text-slate-400 font-mono">{analysisProgress || 'Processing...'}</p>
+                    <div className="mt-2 text-[10px] text-slate-500">
+                      {analysisProgress === 'Analyzing repositories...' && (
+                        <p>⏳ Calling AI to analyze your repositories and generate resume... This may take 2-5 minutes depending on API load.</p>
+                      )}
+                      {analysisProgress === 'Fetching GitHub profile...' && (
+                        <p>📡 Fetching your repositories from GitHub API...</p>
+                      )}
+                      {analysisProgress === 'Generating resume...' && (
+                        <p>✨ AI is crafting your professional resume...</p>
+                      )}
+                      {analysisProgress === 'Saving to database...' && (
+                        <p>💾 Saving your resume to database for future quick access...</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2941,6 +3023,8 @@ export default function App() {
                   </div>
                   <p className="text-xs text-slate-400 leading-relaxed mb-6 font-sans">
                     Enter any public GitHub username (e.g. <code>baifan1366</code>, <code>torvalds</code>) to build a resume without authentication.
+                    <br /><br />
+                    <span className="text-amber-400">⏱️ Note: Analysis takes 2-5 minutes as AI processes your repositories.</span>
                   </p>
                 </div>
                 
