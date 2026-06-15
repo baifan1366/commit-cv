@@ -15,7 +15,7 @@ service cloud.firestore {
         && data.title is string && data.title.size() <= 200
         && data.slogan is string && data.slogan.size() <= 300
         && data.summary is string && data.summary.size() <= 2000
-        && data.lastUpdated is string && data.lastUpdated.size() <= 100;
+        && (data.lastUpdated is number || data.lastUpdated is string);
     }
 
     function isValidChatMessage(data) {

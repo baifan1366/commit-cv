@@ -1719,23 +1719,27 @@ export default function App() {
                         type="text"
                         value={githubUsername}
                         onChange={(e) => setGithubUsername(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && githubUsername.trim() && triggerAnalysis(null, githubUsername)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && githubUsername.trim()) {
+                            // Redirect to public view page
+                            const cleanUsername = githubUsername.trim().replace(/@/g, '');
+                            window.location.href = `/${cleanUsername}`;
+                          }
+                        }}
                         placeholder="Enter GitHub username (e.g. gaearon)"
                         className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 p-2.5 rounded-lg text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-cyan transition"
                       />
                       <button
-                        onClick={() => triggerAnalysis(null, githubUsername)}
-                        disabled={loading || !githubUsername.trim()}
+                        onClick={() => {
+                          // Redirect to public view page instead of running analysis in App.tsx
+                          const cleanUsername = githubUsername.trim().replace(/@/g, '');
+                          window.location.href = `/${cleanUsername}`;
+                        }}
+                        disabled={!githubUsername.trim()}
                         className="w-full bg-brand-cyan hover:bg-cyan-500 text-slate-950 font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
                       >
-                        {loading ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Sparkles className="w-4 h-4 text-slate-950" />
-                            Analyze Public Profile
-                          </>
-                        )}
+                        <Sparkles className="w-4 h-4 text-slate-950" />
+                        View Public Profile
                       </button>
                     </div>
                   </div>
@@ -3091,17 +3095,15 @@ export default function App() {
                     type="text"
                     value={githubUsername}
                     onChange={(e) => setGithubUsername(e.target.value)}
-                    onKeyDown={async (e) => {
-                      if (e.key === 'Enter' && githubUsername.trim() && !publicScanLoading && !loading) {
-                        console.log('[MODAL INPUT] Enter key pressed, starting analysis');
-                        // Don't close modal, keep it open for progress
-                        setPublicScanLoading(true);
-                        await triggerAnalysis(null, githubUsername);
-                        // Close after completion
-                        setShowTryItOutModal(false);
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && githubUsername.trim()) {
+                        console.log('[MODAL INPUT] Enter key pressed, redirecting to public view');
+                        // Redirect to public view page
+                        const cleanUsername = githubUsername.trim().replace(/@/g, '');
+                        window.location.href = `/${cleanUsername}`;
                       }
                     }}
-                    disabled={publicScanLoading || loading}
+                    disabled={false}
                     placeholder="Enter GitHub username (e.g. gaearon)"
                     className="w-full bg-slate-900 border border-slate-800 hover:border-slate-700 p-3 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-cyan transition disabled:opacity-50 disabled:cursor-not-allowed"
                   />
@@ -3110,35 +3112,20 @@ export default function App() {
                       console.log('==============================================');
                       console.log('[PUBLIC SCAN BUTTON] 🔵 Button clicked!');
                       console.log('[PUBLIC SCAN BUTTON] Username input:', githubUsername);
-                      console.log('[PUBLIC SCAN BUTTON] Current resume state:', !!resume);
+                      console.log('[PUBLIC SCAN BUTTON] Redirecting to public view page');
                       console.log('==============================================');
                       
-                      // Don't close modal - show loading inside it
-                      console.log('[PUBLIC SCAN BUTTON] Keeping modal open to show progress');
-                      
-                      setPublicScanLoading(true);
-                      console.log('[PUBLIC SCAN BUTTON] publicScanLoading set to TRUE');
-                      
-                      console.log('[PUBLIC SCAN BUTTON] Calling triggerAnalysis...');
-                      await triggerAnalysis(null, githubUsername);
-                      console.log('[PUBLIC SCAN BUTTON] triggerAnalysis completed');
-                      
-                      // Close modal only after analysis completes
-                      setShowTryItOutModal(false);
-                      console.log('[PUBLIC SCAN BUTTON] Modal closed after completion');
+                      // Redirect to the public-only [username].tsx page instead of showing edit workspace
+                      const cleanUsername = githubUsername.trim().replace(/@/g, '');
+                      window.location.href = `/${cleanUsername}`;
+                      console.log('[PUBLIC SCAN BUTTON] Redirected to /', cleanUsername);
                       console.log('==============================================');
                     }}
                     disabled={publicScanLoading || !githubUsername.trim()}
                     className="w-full bg-brand-cyan hover:bg-cyan-500 text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
                   >
-                    {publicScanLoading ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Sparkles className="w-4 h-4 text-slate-950" />
-                        Analyze Public Profile
-                      </>
-                    )}
+                    <Sparkles className="w-4 h-4 text-slate-950" />
+                    View Public Profile
                   </button>
                 </div>
               </div>
