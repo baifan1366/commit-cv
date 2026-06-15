@@ -380,6 +380,36 @@ function parseEvents(eventsData: any, activity: any) {
   }
 }
 
+// Helper to extract tech stack from README content
+function extractTechStackFromReadme(readmeContent: string): string[] {
+  const techStack: string[] = [];
+  const content = readmeContent.toLowerCase();
+  
+  // Common tech keywords to search for
+  const techKeywords = [
+    'typescript', 'javascript', 'python', 'java', 'go', 'rust', 'ruby', 'php', 'c++', 'c#', 'swift', 'kotlin',
+    'react', 'vue', 'angular', 'svelte', 'next.js', 'nuxt', 'express', 'fastapi', 'django', 'flask', 'spring',
+    'node.js', 'deno', 'bun', 'nestjs', 'tailwind', 'bootstrap', 'material-ui', 'chakra',
+    'postgresql', 'mysql', 'mongodb', 'redis', 'sqlite', 'firebase', 'supabase', 'dynamodb',
+    'docker', 'kubernetes', 'aws', 'gcp', 'azure', 'terraform', 'jenkins', 'github actions', 'gitlab ci',
+    'git', 'webpack', 'vite', 'rollup', 'jest', 'mocha', 'cypress', 'playwright', 'graphql', 'rest api'
+  ];
+  
+  for (const keyword of techKeywords) {
+    if (content.includes(keyword)) {
+      // Capitalize properly
+      const capitalized = keyword === 'next.js' ? 'Next.js' 
+        : keyword === 'node.js' ? 'Node.js'
+        : keyword === 'c++' ? 'C++'
+        : keyword === 'c#' ? 'C#'
+        : keyword.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      techStack.push(capitalized);
+    }
+  }
+  
+  return techStack;
+}
+
 // --- HIGH-ACCURACY FALLBACK RESUME PARSER (RUNS LOCALLY IF GEMINI IS OVERLOADED) ---
 function generateFallbackResume(username: string, activity: any) {
   const foundLanguages = new Set<string>();
@@ -621,6 +651,7 @@ app.post('/api/github/analyze', async (req, res) => {
   };
   let displayUsername = '';
   let userAvatarUrl = '';
+  let readmeContent = ''; // Store README content for analysis
 
   const headers: Record<string, string> = {
     'User-Agent': 'CommitCV-App',
@@ -648,7 +679,39 @@ app.post('/api/github/analyze', async (req, res) => {
       ]);
 
       const reposData = reposRes.ok ? await reposRes.json() : [];
+      console.log(`[DEBUG] Fetched ${Array.isArray(reposData) ? reposData.length : 0} repositories for OAuth user ${loginName}`);
+      
+      // Extract README repository content
+      let readmeContent = '';
       if (Array.isArray(reposData)) {
+        const readmeRepo = reposData.find((r: any) => r.name.toLowerCase() === loginName.toLowerCase());
+        if (readmeRepo) {
+          console.log(`[DEBUG] Found README repository: ${readmeRepo.name}`);
+          try {
+            const readmeRes = await fetchWithTimeout(
+              `https://api.github.com/repos/${loginName}/${readmeRepo.name}/readme`,
+              { headers: { ...headers, 'Accept': 'application/vnd.github.v3.raw' } },
+              GITHUB_TIMEOUT_MS
+            );
+            if (readmeRes.ok) {
+              readmeContent = await readmeRes.text();
+              console.log(`[DEBUG] README content fetched, length: ${readmeContent.length} characters`);
+              console.log(`[DEBUG] README content preview:\n${readmeContent.substring(0, 500)}...`);
+              
+              // Extract tech stack from README
+              const extractedTechStack = extractTechStackFromReadme(readmeContent);
+              console.log(`[DEBUG] Tech stack extracted from README: ${extractedTechStack.join(', ')}`);
+              console.log(`[DEBUG] Total technologies found in README: ${extractedTechStack.length}`);
+            } else {
+              console.log(`[DEBUG] README fetch failed with status: ${readmeRes.status}`);
+            }
+          } catch (readmeErr: any) {
+            console.log(`[DEBUG] Error fetching README: ${readmeErr.message}`);
+          }
+        } else {
+          console.log(`[DEBUG] No README repository found for user ${loginName}`);
+        }
+
         // Filter out the user's README repository (username/username)
         activity.repositories = reposData
           .filter((r: any) => r.name.toLowerCase() !== loginName.toLowerCase())
@@ -660,10 +723,14 @@ app.post('/api/github/analyze', async (req, res) => {
             updatedAt: r.updated_at,
             url: r.html_url
           }));
+        console.log(`[DEBUG] Filtered repositories count: ${activity.repositories.length}`);
+        console.log(`[DEBUG] Repository details:`, JSON.stringify(activity.repositories, null, 2));
       }
 
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
+      console.log(`[DEBUG] Fetched ${Array.isArray(eventsData) ? eventsData.length : 0} events`);
       parseEvents(eventsData, activity);
+      console.log(`[DEBUG] Parsed commits: ${activity.commits.length}, PRs: ${activity.pullRequests.length}, Issues: ${activity.issues.length}`);
       console.log(`[analyze] OAuth activity loaded in ${Date.now() - startedAt}ms`);
 
     } else if (inputUsername) {
@@ -693,7 +760,39 @@ app.post('/api/github/analyze', async (req, res) => {
         throw new Error(`Could not access public repositories for "${cleanedUser}": API rate limit or error.`);
       }
       const reposData = await reposRes.json();
+      console.log(`[DEBUG] Fetched ${Array.isArray(reposData) ? reposData.length : 0} repositories for public user ${cleanedUser}`);
+      
+      // Extract README repository content
+      let readmeContent = '';
       if (Array.isArray(reposData)) {
+        const readmeRepo = reposData.find((r: any) => r.name.toLowerCase() === cleanedUser.toLowerCase());
+        if (readmeRepo) {
+          console.log(`[DEBUG] Found README repository: ${readmeRepo.name}`);
+          try {
+            const readmeRes = await fetchWithTimeout(
+              `https://api.github.com/repos/${cleanedUser}/${readmeRepo.name}/readme`,
+              { headers: { ...headers, 'Accept': 'application/vnd.github.v3.raw' } },
+              GITHUB_TIMEOUT_MS
+            );
+            if (readmeRes.ok) {
+              readmeContent = await readmeRes.text();
+              console.log(`[DEBUG] README content fetched, length: ${readmeContent.length} characters`);
+              console.log(`[DEBUG] README content preview:\n${readmeContent.substring(0, 500)}...`);
+              
+              // Extract tech stack from README
+              const extractedTechStack = extractTechStackFromReadme(readmeContent);
+              console.log(`[DEBUG] Tech stack extracted from README: ${extractedTechStack.join(', ')}`);
+              console.log(`[DEBUG] Total technologies found in README: ${extractedTechStack.length}`);
+            } else {
+              console.log(`[DEBUG] README fetch failed with status: ${readmeRes.status}`);
+            }
+          } catch (readmeErr: any) {
+            console.log(`[DEBUG] Error fetching README: ${readmeErr.message}`);
+          }
+        } else {
+          console.log(`[DEBUG] No README repository found for user ${cleanedUser}`);
+        }
+
         // Filter out the user's README repository (username/username)
         activity.repositories = reposData
           .filter((r: any) => r.name.toLowerCase() !== cleanedUser.toLowerCase())
@@ -705,10 +804,14 @@ app.post('/api/github/analyze', async (req, res) => {
             updatedAt: r.updated_at,
             url: r.html_url
           }));
+        console.log(`[DEBUG] Filtered repositories count: ${activity.repositories.length}`);
+        console.log(`[DEBUG] Repository details:`, JSON.stringify(activity.repositories, null, 2));
       }
 
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
+      console.log(`[DEBUG] Fetched ${Array.isArray(eventsData) ? eventsData.length : 0} events`);
       parseEvents(eventsData, activity);
+      console.log(`[DEBUG] Parsed commits: ${activity.commits.length}, PRs: ${activity.pullRequests.length}, Issues: ${activity.issues.length}`);
       console.log(`[analyze] Public activity loaded in ${Date.now() - startedAt}ms`);
     }
 
@@ -722,7 +825,8 @@ You analyze raw developer activities (a sequence of repositories, description te
 You highlight real skills. You avoid generic fluffy summaries, and focus on practical impact with active verbs (e.g. "Configured", "Engineered", "Optimized", "Refactored").
 
 Crucial rules:
-- Extract and list exact technologies (languages, frameworks, databases, and tools) discovered from their repos and languages tags.
+- Extract and list exact technologies (languages, frameworks, databases, and tools) discovered from their repos, languages tags, AND their GitHub profile README if available.
+- PRIORITIZE technologies mentioned in the README file as these are often the developer's featured tech stack.
 - NEVER invent contact details (location, email, phone, age). Omit the contact object entirely unless real data exists in the source — users will add these manually.
 - Do NOT include placeholder addresses, fake emails, or labels like "Fully Analyzed Profile".
 - For Projects: select their top 2-3 most relevant coding repositories. Provide 3 high-impact bullets per project describing:
@@ -732,8 +836,13 @@ Crucial rules:
 - Synthesize an elegant careers slogan aligned to their profile, and a concise technical summary.
 - Response MUST strictly match the requested JSON schema.`;
 
+    const readmeSection = readmeContent 
+      ? `\n\nGitHub Profile README Content (use this as primary tech stack reference):\n${readmeContent}\n`
+      : '';
+
     const promptText = `Analyze the live GitHub developer profile and activity data to generate custom Living CV:
 Developer Representative Name: ${displayUsername}
+${readmeSection}
 Repositories List: ${JSON.stringify(activity.repositories)}
 Recent Commits Activities: ${JSON.stringify(activity.commits)}
 Recent Pull Requests: ${JSON.stringify(activity.pullRequests)}
@@ -791,10 +900,21 @@ Return EXACTLY a JSON format mapping this strict schema:
 
       resumeObj = JSON.parse(parsedJsonStr);
       console.log(`[analyze] OpenRouter completed in ${Date.now() - startedAt}ms`);
+      console.log(`[DEBUG] Generated resume skills:`, JSON.stringify(resumeObj.skills, null, 2));
+      console.log(`[DEBUG] Generated resume projects count: ${resumeObj.projects?.length || 0}`);
+      console.log(`[DEBUG] Generated resume statistics:`, JSON.stringify(resumeObj.statistics, null, 2));
     } catch (openRouterError: any) {
       console.warn('OpenRouter query error, executing high-fidelity fallback parser:', openRouterError.message || openRouterError);
       resumeObj = generateFallbackResume(displayUsername, activity);
+      console.log(`[DEBUG] Fallback resume skills:`, JSON.stringify(resumeObj.skills, null, 2));
     }
+
+    // Attach raw GitHub activity data for AI Career Coach
+    resumeObj.githubData = activity;
+    resumeObj.avatarUrl = userAvatarUrl;
+    
+    console.log(`[DEBUG] Final resume object keys: ${Object.keys(resumeObj).join(', ')}`);
+    console.log(`[DEBUG] Complete GitHub data attached: repositories=${activity.repositories.length}, commits=${activity.commits.length}, PRs=${activity.pullRequests.length}, issues=${activity.issues.length}`);
 
     res.json({
       resume: resumeObj,
@@ -878,36 +998,53 @@ app.post('/api/coach/insights', async (req, res) => {
 Your core mission is to observe a developer's trajectory over the span of decades, quietly looking out for their career, and speaking up ONLY with critical, high-impact career intervention advice when it matters.
 You hate tech hypes, resume padding, "AI-wrapper engineering", over-engineered React states, or switching frameworks every 6 months. You care to build engineers who understand fundamentals: database latency, system boundaries, distributed consensus, data modeling, clean interfaces, and business value.
 
-Based on the provided Resume JSON, you must generate a JSON object with this exact structure:
+Based on the provided Resume JSON AND their complete GitHub activity data (repositories, commits, pull requests, issues, stars, forks, languages, topics), you must generate a JSON object with this exact structure:
 {
   "mentorProfile": {
     "name": "Alistair 'The Vet' Vance",
     "role": "Retired Principal Architect",
     "style": "Gruff, wise, decade-scale, hates hype, immensely caring."
   },
-  "overallVerdict": "A short (2-3 sentences), highly personalized, brutally honest assessment of the developer's scale, capability, and career trajectory based on their current CV structure.",
+  "overallVerdict": "A short (2-3 sentences), highly personalized, brutally honest assessment of the developer's scale, capability, and career trajectory based on their current CV structure AND their actual GitHub activity patterns. Reference specific repositories, commit patterns, or contribution behaviors.",
   "alerts": [
     {
       "id": "alert_1",
       "type": "trajectory",
       "title": "A provocative, attention-grabbing title (e.g., 'Stop Chasing the JS Flavor of the Month')",
-      "explanation": "A paragraph of wise, cynical, but practical advice on what they must stop doing, start doing, or master to reach the next tier of ownership. Be highly specific about their stack or projects."
+      "explanation": "A paragraph of wise, cynical, but practical advice on what they must stop doing, start doing, or master to reach the next tier of ownership. Be highly specific about their stack, projects, commit patterns, or collaboration style based on the GitHub data."
     }
   ],
   "observations": [
     {
       "timestamp": "e.g., June 12, 2026",
-      "note": "A quiet observation of their career history or technical choices (e.g., 'Noticed they built a custom SVG editor. Neat math, but watch out for performance overhead in legacy nodes'). Produce exactly 3 of these historic looking-back remarks."
+      "note": "A quiet observation of their career history or technical choices based on actual GitHub data (e.g., 'Noticed they forked 15 React repos but only contributed to 2. Watch out for tutorial paralysis'). Produce exactly 3 of these historic looking-back remarks based on real patterns in their repositories, commits, PRs, and issues."
     }
   ]
 }
 
+IMPORTANT: Use the githubData object to analyze:
+- Repository interaction: starred repos, forked repos, watched repos, owned repos
+- Contribution patterns: commit frequency, PR quality, issue engagement, code review activity
+- Technical depth: languages used consistently, framework choices, database preferences
+- Project diversity: variety of topics, repo sizes, collaboration vs solo work
+- Activity timeline: recent activity, consistency over time, gaps in contributions
+
 Ensure the "alerts" array contains exactly 3 critical alerts (of types: trajectory, depth, warning, or opportunity).
 Return ONLY this valid JSON object, no auxiliary text or markdown formatting. Use clean, professional language with a bit of gruff, mentor personality.`;
 
+    const githubDataSummary = currentResume.githubData ? {
+      repositories: currentResume.githubData.repositories || [],
+      commits: currentResume.githubData.commits || [],
+      pullRequests: currentResume.githubData.pullRequests || [],
+      issues: currentResume.githubData.issues || [],
+      statistics: currentResume.statistics || {}
+    } : null;
+
     const promptText = `Current Resume State: ${JSON.stringify(currentResume)}
+
+${githubDataSummary ? `\nDetailed GitHub Activity Data for Deep Analysis:\n${JSON.stringify(githubDataSummary, null, 2)}` : ''}
     
-Analyze the trajectory and return the specified JSON structure.`;
+Analyze the trajectory using both the resume summary AND the detailed GitHub activity data to provide insights based on real behavioral patterns. Return the specified JSON structure.`;
 
     const outputText = await callOpenRouter(systemInstruction, promptText, true);
     if (!outputText) {
@@ -936,19 +1073,39 @@ app.post('/api/coach/chat', async (req, res) => {
   }
 
   try {
+    const githubDataSummary = currentResume.githubData ? {
+      repositories: currentResume.githubData.repositories || [],
+      commits: currentResume.githubData.commits || [],
+      pullRequests: currentResume.githubData.pullRequests || [],
+      issues: currentResume.githubData.issues || [],
+      totalRepos: currentResume.statistics?.repositoriesCount || 0,
+      totalCommits: currentResume.statistics?.commitsCount || 0,
+      totalPRs: currentResume.statistics?.pullRequestsCount || 0,
+      totalIssues: currentResume.statistics?.issuesCount || 0
+    } : null;
+
     const systemInstruction = `You are Alistair 'The Vet' Vance, a semi-retired, crusty but deeply caring Principal Architect and long-term career mentor.
 You talk like a real senior mentor who has seen it all since the early 90s: wise, blunt, hates jargon, but is highly protective of your juniors and wants them to thrive for decades.
 You are looking out for their career over the long run. Speak up or answer their concerns directly, focusing on decade-scale growth, depth over trend-chasing, ownership, and simplicity.
 
 Context:
 Developer's Resume: ${JSON.stringify(currentResume)}
+${githubDataSummary ? `\nDetailed GitHub Activity:\n${JSON.stringify(githubDataSummary, null, 2)}` : ''}
 
-When responding, be direct, do not sugarcoat, avoid generic corporate advice, and give actionable wisdom from your 30 years of experience. Keep your answers relatively short, authentic, and packed with old-school developer flavor. Try to avoid bullet points unless truly necessary - just talk like an experienced developer over coffee.`;
+You have access to their complete GitHub activity data including:
+- All repositories (owned, starred, forked, watched)
+- Commit history and patterns
+- Pull request contributions
+- Issue engagement and code reviews
+- Languages, frameworks, and topics used
+- Collaboration patterns and activity timeline
+
+When responding, be direct, do not sugarcoat, avoid generic corporate advice, and give actionable wisdom from your 30 years of experience. Reference specific patterns from their GitHub data when relevant. Keep your answers relatively short, authentic, and packed with old-school developer flavor. Try to avoid bullet points unless truly necessary - just talk like an experienced developer over coffee.`;
 
     const promptText = `Chat History: ${JSON.stringify(history || [])}
 User Question/Concern: "${message}"
 
-Respond in character as Alistair 'The Vet' Vance. Keep it authentic and deep.`;
+Respond in character as Alistair 'The Vet' Vance. Use their actual GitHub data to provide specific, personalized advice. Keep it authentic and deep.`;
 
     const outputText = await callOpenRouter(systemInstruction, promptText, false);
     if (!outputText) {

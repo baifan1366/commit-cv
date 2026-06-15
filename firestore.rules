@@ -50,6 +50,30 @@ service cloud.firestore {
       allow delete: if true;
     }
 
+    // AI Career Coach insights - nested under resumes
+    match /resumes/{username}/coachInsights/{insightId} {
+      // Allow public read for coach insights
+      allow get, list: if true;
+      
+      // Allow create/update (insights are generated and cached)
+      allow create, update: if isValidId(username);
+      
+      // Allow delete (for clearing coach cache)
+      allow delete: if true;
+    }
+
+    // AI Career Coach chat history - nested under resumes
+    match /resumes/{username}/coachChat/{messageId} {
+      // Allow public read for coach chat history
+      allow get, list: if true;
+      
+      // Allow create/update with validation
+      allow create, update: if isValidId(username) && isValidChatMessage(incoming());
+      
+      // Allow delete (for clearing coach chat)
+      allow delete: if true;
+    }
+
     // Default deny for every other collection.
     match /{document=**} {
       allow read, write: if false;

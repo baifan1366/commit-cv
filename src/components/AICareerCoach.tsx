@@ -19,46 +19,22 @@ import {
   History,
   CheckCircle,
   HelpCircle,
-  Clock
+  Clock,
+  Lock,
+  Github
 } from 'lucide-react';
-import { CommitCVResume } from '../types';
+import { CommitCVResume, CoachInsights, CoachMessage } from '../types';
+import { db } from '../firebase';
+import { doc, getDoc, setDoc, collection, query, orderBy, getDocs, deleteDoc } from 'firebase/firestore';
 
 interface AICareerCoachProps {
   currentResume: CommitCVResume;
   username: string;
+  isAuthenticated: boolean;
+  onRequestAuth: () => void;
 }
 
-interface CoachAlert {
-  id: string;
-  type: 'trajectory' | 'depth' | 'warning' | 'opportunity';
-  title: string;
-  explanation: string;
-}
-
-interface CoachObservation {
-  timestamp: string;
-  note: string;
-}
-
-interface CoachInsights {
-  mentorProfile: {
-    name: string;
-    role: string;
-    style: string;
-  };
-  overallVerdict: string;
-  alerts: CoachAlert[];
-  observations: CoachObservation[];
-}
-
-interface CoachMessage {
-  id: string;
-  sender: 'user' | 'mentor';
-  text: string;
-  timestamp: string;
-}
-
-export default function AICareerCoach({ currentResume, username }: AICareerCoachProps) {
+export default function AICareerCoach({ currentResume, username, isAuthenticated, onRequestAuth }: AICareerCoachProps) {
   const [insights, setInsights] = useState<CoachInsights | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +43,8 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
   const [messages, setMessages] = useState<CoachMessage[]>([]);
   const [inputValue, setInputValue] = useState<string>('');
   const [chatLoading, setChatLoading] = useState<boolean>(false);
+  const [savingChat, setSavingChat] = useState<boolean>(false);
+  const [chatHistoryLoaded, setChatHistoryLoaded] = useState<boolean>(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -75,40 +53,110 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, chatLoading]);
 
+  // Load chat history from Firestore
+  const loadChatHistory = async () => {
+    if (!username || !db) return;
+    const cleanUsernameLower = username.trim().replace(/@/g, '').toLowerCase();
+    
+    try {
+      const chatHistoryRef = collection(db, 'resumes', cleanUsernameLower, 'coachChat');
+      const chatQuery = query(chatHistoryRef, orderBy('timestamp', 'asc'));
+      const chatDocs = await getDocs(chatQuery);
+      
+      const loadedMessages: CoachMessage[] = [];
+      chatDocs.forEach((docSnap) => {
+        loadedMessages.push(docSnap.data() as CoachMessage);
+      });
+      
+      if (loadedMessages.length > 0) {
+        setMessages(loadedMessages);
+        console.log(`Loaded ${loadedMessages.length} coach chat messages from Firestore`);
+      }
+    } catch (err) {
+      console.error('Failed to load coach chat history:', err);
+    }
+  };
+
+  // Save chat history to Firestore
+  const saveChatHistory = async (chatMessages: CoachMessage[]) => {
+    if (!username || !db) return;
+    const cleanUsernameLower = username.trim().replace(/@/g, '').toLowerCase();
+    
+    setSavingChat(true);
+    try {
+      const chatHistoryRef = collection(db, 'resumes', cleanUsernameLower, 'coachChat');
+      
+      // Clear existing messages first
+      const existingQuery = query(chatHistoryRef);
+      const existingDocs = await getDocs(existingQuery);
+      const deletePromises = existingDocs.docs.map(docSnap => deleteDoc(docSnap.ref));
+      await Promise.all(deletePromises);
+      
+      // Add new messages
+      const savePromises = chatMessages.map(msg => 
+        setDoc(doc(chatHistoryRef, msg.id), msg)
+      );
+      await Promise.all(savePromises);
+      
+      console.log(`Saved ${chatMessages.length} coach chat messages to Firestore`);
+    } catch (err) {
+      console.error('Failed to save coach chat history:', err);
+    } finally {
+      setSavingChat(false);
+    }
+  };
+
   // Load insights on mount or when resume changes
   const fetchInsights = async (forceRefresh = false) => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
-      // Check if cache exists in localStorage
-      const cacheKey = `coach_insights_${username.toLowerCase()}`;
-      if (!forceRefresh) {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            setInsights(parsed);
-            setLoading(false);
-            
-            // Set initial welcoming message if chat is empty
-            if (messages.length === 0) {
-              setMessages([
-                {
+      const cleanUsernameLower = username.toLowerCase();
+
+      // Check Firestore cache first
+      if (!forceRefresh && db) {
+        try {
+          const insightsDocRef = doc(db, 'resumes', cleanUsernameLower, 'coachInsights', 'latest');
+          const insightsDoc = await getDoc(insightsDocRef);
+          
+          if (insightsDoc.exists()) {
+            const cachedInsights = insightsDoc.data() as CoachInsights;
+            // Check if cache is less than 24 hours old
+            const cacheAge = Date.now() - (cachedInsights.generatedAt || 0);
+            if (cacheAge < 24 * 60 * 60 * 1000) {
+              setInsights(cachedInsights);
+              setLoading(false);
+              
+              // Load chat history if not already loaded
+              if (!chatHistoryLoaded) {
+                await loadChatHistory();
+                setChatHistoryLoaded(true);
+              }
+              
+              // Set initial welcoming message if chat is empty
+              if (messages.length === 0) {
+                const welcomeMsg: CoachMessage = {
                   id: 'init-msg',
                   sender: 'mentor',
                   text: `Sit down, kid. I've been looking over your profile at ${username}. I've got some notes on where you're headed. Look at my analysis below, and let's have a real, unfiltered chat about your 10-year outlook.`,
                   timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                }
-              ]);
+                };
+                setMessages([welcomeMsg]);
+              }
+              return;
             }
-            return;
-          } catch (e) {
-            console.warn('Failed parsing cached insights:', e);
           }
+        } catch (err) {
+          console.warn('Failed to load coach insights from Firestore, fetching from API:', err);
         }
       }
 
-      // No cache, fetch from API
+      // No cache or force refresh, fetch from API
       const response = await fetch('/api/coach/insights', {
         method: 'POST',
         headers: {
@@ -123,19 +171,35 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
       }
 
       const data: CoachInsights = await response.json();
+      data.generatedAt = Date.now();
       setInsights(data);
-      localStorage.setItem(cacheKey, JSON.stringify(data));
+      
+      // Save to Firestore
+      if (db) {
+        try {
+          const insightsDocRef = doc(db, 'resumes', cleanUsernameLower, 'coachInsights', 'latest');
+          await setDoc(insightsDocRef, data);
+          console.log('Saved coach insights to Firestore');
+        } catch (err) {
+          console.error('Failed to save coach insights to Firestore:', err);
+        }
+      }
+      
+      // Load chat history if not already loaded
+      if (!chatHistoryLoaded) {
+        await loadChatHistory();
+        setChatHistoryLoaded(true);
+      }
       
       // Set welcoming message
       if (messages.length === 0) {
-        setMessages([
-          {
-            id: 'init-msg',
-            sender: 'mentor',
-            text: `Sit down, kid. I've been looking over your profile at ${username}. I've got some notes on where you're headed. Look at my analysis below, and let's have a real, unfiltered chat about your 10-year outlook.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ]);
+        const welcomeMsg: CoachMessage = {
+          id: 'init-msg',
+          sender: 'mentor',
+          text: `Sit down, kid. I've been looking over your profile at ${username}. I've got some notes on where you're headed. Look at my analysis below, and let's have a real, unfiltered chat about your 10-year outlook.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        setMessages([welcomeMsg]);
       }
     } catch (err: any) {
       console.error('Error fetching coach insights:', err);
@@ -147,7 +211,7 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
 
   useEffect(() => {
     fetchInsights();
-  }, [username, currentResume]);
+  }, [username, currentResume, isAuthenticated]);
 
   const handleSendMessage = async (customText?: string) => {
     const textToSend = customText || inputValue;
@@ -164,7 +228,8 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setMessages(prev => [...prev, userMsg]);
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
     setChatLoading(true);
 
     try {
@@ -191,21 +256,32 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
 
       const data = await response.json();
       
-      setMessages(prev => [...prev, {
+      const mentorMsg: CoachMessage = {
         id: `mentor-${Date.now()}`,
         sender: 'mentor',
         text: data.mentorResponse || "I've ran into compile errors on my side, kid. Re-try that query.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
+      };
+
+      const finalMessages = [...updatedMessages, mentorMsg];
+      setMessages(finalMessages);
+      
+      // Save chat history to Firestore
+      await saveChatHistory(finalMessages);
 
     } catch (err) {
       console.error('Coach chat error:', err);
-      setMessages(prev => [...prev, {
+      const errorMsg: CoachMessage = {
         id: `mentor-err-${Date.now()}`,
         sender: 'mentor',
         text: "Sorry, connection cut. Let's try that question again.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
+      };
+      const finalMessages = [...updatedMessages, errorMsg];
+      setMessages(finalMessages);
+      
+      // Save even error messages
+      await saveChatHistory(finalMessages);
     } finally {
       setChatLoading(false);
     }
@@ -221,6 +297,71 @@ export default function AICareerCoach({ currentResume, username }: AICareerCoach
     "What core fundamentals am I missing to become a Principal Engineer?",
     "How can I turn my side projects into high-scale architectural proofs?"
   ];
+
+  // Authentication gate
+  if (!isAuthenticated) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center py-20 text-center max-w-2xl mx-auto">
+        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-700/10 border border-amber-500/30 flex items-center justify-center mb-6">
+          <Lock className="w-10 h-10 text-amber-500" />
+        </div>
+        <h3 className="font-display font-extrabold text-2xl text-white mb-3">GitHub Authentication Required</h3>
+        <p className="text-sm text-slate-400 font-sans mb-8 max-w-lg leading-relaxed">
+          The AI Career Coach requires access to your complete GitHub profile data to provide personalized career guidance. This includes:
+        </p>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8 w-full max-w-xl text-left">
+          <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-4">
+            <h4 className="text-xs font-mono font-bold text-amber-400 mb-2 uppercase tracking-wide">Repository Data</h4>
+            <ul className="text-xs text-slate-300 space-y-1 font-sans">
+              <li>• Starred repositories</li>
+              <li>• Forked repositories</li>
+              <li>• Watched repositories</li>
+            </ul>
+          </div>
+          
+          <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-4">
+            <h4 className="text-xs font-mono font-bold text-amber-400 mb-2 uppercase tracking-wide">Contribution Analysis</h4>
+            <ul className="text-xs text-slate-300 space-y-1 font-sans">
+              <li>• Commit history</li>
+              <li>• Pull requests</li>
+              <li>• Issues & reviews</li>
+            </ul>
+          </div>
+          
+          <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-4">
+            <h4 className="text-xs font-mono font-bold text-amber-400 mb-2 uppercase tracking-wide">Technical Profile</h4>
+            <ul className="text-xs text-slate-300 space-y-1 font-sans">
+              <li>• Languages used</li>
+              <li>• Repository topics</li>
+              <li>• Activity patterns</li>
+            </ul>
+          </div>
+          
+          <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-4">
+            <h4 className="text-xs font-mono font-bold text-amber-400 mb-2 uppercase tracking-wide">Career Insights</h4>
+            <ul className="text-xs text-slate-300 space-y-1 font-sans">
+              <li>• Skill progression</li>
+              <li>• Project diversity</li>
+              <li>• Collaboration depth</li>
+            </ul>
+          </div>
+        </div>
+
+        <button
+          onClick={onRequestAuth}
+          className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-display font-bold text-sm px-8 py-3 rounded-xl transition flex items-center gap-2 shadow-lg shadow-amber-950/40"
+        >
+          <Github className="w-5 h-5" />
+          Connect GitHub Account
+        </button>
+        
+        <p className="text-xs text-slate-500 mt-6 font-mono">
+          Your data is used solely for generating career insights and is never shared with third parties.
+        </p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

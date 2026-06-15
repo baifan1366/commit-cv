@@ -103,6 +103,38 @@ export interface CommitCVResume {
     timestamp: string;
     addedSkills: string[];
   };
+  githubData?: GitHubActivity; // Store raw GitHub data for AI Coach
+}
+
+export interface CoachInsights {
+  mentorProfile: {
+    name: string;
+    role: string;
+    style: string;
+  };
+  overallVerdict: string;
+  alerts: CoachAlert[];
+  observations: CoachObservation[];
+  generatedAt: number; // timestamp
+}
+
+export interface CoachAlert {
+  id: string;
+  type: 'trajectory' | 'depth' | 'warning' | 'opportunity';
+  title: string;
+  explanation: string;
+}
+
+export interface CoachObservation {
+  timestamp: string;
+  note: string;
+}
+
+export interface CoachMessage {
+  id: string;
+  sender: 'user' | 'mentor';
+  text: string;
+  timestamp: string;
 }
 
 export interface ChatMessage {

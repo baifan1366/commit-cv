@@ -24,7 +24,10 @@ import {
   CheckCircle2,
   Clock,
   LayoutTemplate,
-  Save
+  Save,
+  BrainCircuit,
+  ShieldAlert,
+  Compass
 } from 'lucide-react';
 import { CommitCVResume, ChatMessage, ResumeContact } from './types';
 import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, query, orderBy, getDocs, deleteDoc } from 'firebase/firestore';
@@ -426,6 +429,36 @@ export default function App() {
 
         livingTl.to('[data-activity="cicd"]', { opacity: 1, duration: 0.5 })
                 .to('[data-resume-skill="cicd"]', { opacity: 1, scale: 1, duration: 0.5 }, "-=0.2");
+
+        // Section 6: AI Career Coach ScrollTrigger
+        gsap.set('.coach-title', { opacity: 0, y: 50 });
+        gsap.set('.coach-subtitle', { opacity: 0, y: 30 });
+        gsap.set('.career-path-card', { opacity: 0, x: -100 });
+        gsap.set('.coach-cta', { opacity: 0, y: 30 });
+        
+        const coachTl = gsap.timeline({
+          scrollTrigger: {
+            trigger: ".career-coach-section",
+            start: "top center-=200",
+            end: "bottom center+=300",
+            scrub: true
+          }
+        });
+
+        // Title and subtitle fade in
+        coachTl.to('.coach-title', { opacity: 1, y: 0, duration: 0.5 })
+               .to('.coach-subtitle', { opacity: 1, y: 0, duration: 0.5 }, "-=0.3");
+
+        // Career path cards slide in from left with stagger
+        coachTl.to('[data-path="backend"]', { opacity: 1, x: 0, duration: 0.6 }, "-=0.2")
+               .to('[data-path="frontend"]', { opacity: 1, x: 0, duration: 0.6 }, "-=0.4")
+               .to('[data-path="devops"]', { opacity: 1, x: 0, duration: 0.6 }, "-=0.4")
+               .to('[data-path="ml"]', { opacity: 1, x: 0, duration: 0.6 }, "-=0.4")
+               .to('[data-path="mobile"]', { opacity: 1, x: 0, duration: 0.6 }, "-=0.4")
+               .to('[data-path="security"]', { opacity: 1, x: 0, duration: 0.6 }, "-=0.4");
+
+        // CTA section fades in
+        coachTl.to('.coach-cta', { opacity: 1, y: 0, duration: 0.8 });
       });
     });
 
@@ -1606,6 +1639,172 @@ export default function App() {
               </div>
             </section>
 
+            {/* Section 6 - AI Career Coach */}
+            <section className="scroll-section career-coach-section min-h-screen flex items-center justify-center relative w-full bg-slate-950 border-t border-slate-900 py-20 overflow-hidden">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-amber-950/10 via-slate-950 to-slate-950 pointer-events-none" />
+              
+              <div className="max-w-6xl mx-auto px-4 w-full relative z-10">
+                
+                {/* Section Header */}
+                <div className="text-center mb-16">
+                  <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 px-4 py-1.5 rounded-full text-xs font-mono text-amber-400 mb-4">
+                    <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                    <span>AI-Powered Career Intelligence</span>
+                  </div>
+                  <h2 className="coach-title font-display font-bold text-4xl md:text-6xl text-white mb-4 tracking-tight">
+                    Your <span className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">Career Advisor</span> Awaits
+                  </h2>
+                  <p className="coach-subtitle text-slate-400 text-base md:text-lg max-w-2xl mx-auto leading-relaxed">
+                    AI analyzes your GitHub trajectory, skill patterns, and project depth to guide your next 10 years.
+                  </p>
+                </div>
+
+                {/* Career Paths Grid - Cards slide in from left */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
+                  
+                  {/* Backend Engineering Path */}
+                  <div className="career-path-card group cursor-pointer opacity-0" data-path="backend" style={{ transform: 'translateX(-100px)' }}>
+                    <div className="bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-amber-500/10 h-full flex flex-col">
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border border-blue-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <Database className="w-7 h-7 text-blue-400" />
+                      </div>
+                      <h3 className="font-display font-bold text-xl text-white mb-2 group-hover:text-amber-400 transition-colors">Backend Engineering</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed mb-4 flex-1">
+                        Master distributed systems, database optimization, API design, and microservices architecture.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Go</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">PostgreSQL</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Redis</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">gRPC</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Frontend Engineering Path */}
+                  <div className="career-path-card group cursor-pointer opacity-0" data-path="frontend" style={{ transform: 'translateX(-100px)' }}>
+                    <div className="bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-amber-500/10 h-full flex flex-col">
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <Code className="w-7 h-7 text-purple-400" />
+                      </div>
+                      <h3 className="font-display font-bold text-xl text-white mb-2 group-hover:text-amber-400 transition-colors">Frontend Engineering</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed mb-4 flex-1">
+                        Build responsive UIs, performance optimization, component architecture, and modern frameworks.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">React</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">TypeScript</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Next.js</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Tailwind</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* DevOps/SRE Path */}
+                  <div className="career-path-card group cursor-pointer opacity-0" data-path="devops" style={{ transform: 'translateX(-100px)' }}>
+                    <div className="bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-amber-500/10 h-full flex flex-col">
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <Terminal className="w-7 h-7 text-emerald-400" />
+                      </div>
+                      <h3 className="font-display font-bold text-xl text-white mb-2 group-hover:text-amber-400 transition-colors">DevOps & SRE</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed mb-4 flex-1">
+                        Infrastructure as code, CI/CD pipelines, container orchestration, and system reliability.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Kubernetes</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Docker</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Terraform</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">AWS</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Machine Learning Path */}
+                  <div className="career-path-card group cursor-pointer opacity-0" data-path="ml" style={{ transform: 'translateX(-100px)' }}>
+                    <div className="bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-amber-500/10 h-full flex flex-col">
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-orange-500/20 to-red-500/20 border border-orange-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <BrainCircuit className="w-7 h-7 text-orange-400" />
+                      </div>
+                      <h3 className="font-display font-bold text-xl text-white mb-2 group-hover:text-amber-400 transition-colors">Machine Learning</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed mb-4 flex-1">
+                        Deep learning, model training, data pipelines, and production ML infrastructure.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Python</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">PyTorch</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">TensorFlow</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">MLflow</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Mobile Development Path */}
+                  <div className="career-path-card group cursor-pointer opacity-0" data-path="mobile" style={{ transform: 'translateX(-100px)' }}>
+                    <div className="bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-amber-500/10 h-full flex flex-col">
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <Sparkles className="w-7 h-7 text-indigo-400" />
+                      </div>
+                      <h3 className="font-display font-bold text-xl text-white mb-2 group-hover:text-amber-400 transition-colors">Mobile Development</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed mb-4 flex-1">
+                        Native and cross-platform apps, responsive design, offline-first architecture.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">React Native</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Swift</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Kotlin</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Flutter</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Security Engineering Path */}
+                  <div className="career-path-card group cursor-pointer opacity-0" data-path="security" style={{ transform: 'translateX(-100px)' }}>
+                    <div className="bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-amber-500/10 h-full flex flex-col">
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-red-500/20 to-rose-500/20 border border-red-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                        <ShieldAlert className="w-7 h-7 text-red-400" />
+                      </div>
+                      <h3 className="font-display font-bold text-xl text-white mb-2 group-hover:text-amber-400 transition-colors">Security Engineering</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed mb-4 flex-1">
+                        Threat modeling, secure architecture, penetration testing, and compliance.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">OWASP</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Auth</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">Cryptography</span>
+                        <span className="text-[10px] font-mono bg-slate-950 text-slate-300 border border-slate-800 px-2 py-0.5 rounded">ZeroTrust</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* CTA Section */}
+                <div className="coach-cta text-center opacity-0" style={{ transform: 'translateY(30px)' }}>
+                  <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30 rounded-2xl p-8 max-w-3xl mx-auto">
+                    <div className="flex items-center justify-center gap-3 mb-4">
+                      <Compass className="w-8 h-8 text-amber-500" />
+                      <h3 className="font-display font-bold text-2xl text-white">Meet Alistair "The Vet" Vance</h3>
+                    </div>
+                    <p className="text-slate-300 text-sm leading-relaxed mb-6 max-w-2xl mx-auto">
+                      A semi-retired Principal Architect who's seen it all since the early 90s. Gruff, wise, and deeply caring about your long-term career trajectory. He speaks up only when it matters—and analyzes your GitHub data to guide your next decade.
+                    </p>
+                    <button
+                      onClick={() => {
+                        if (!resume) {
+                          setShowTryItOutModal(true);
+                        }
+                      }}
+                      className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-display font-bold text-sm px-8 py-3 rounded-xl transition flex items-center gap-2 shadow-lg shadow-amber-950/40 mx-auto"
+                    >
+                      <Sparkles className="w-5 h-5" />
+                      <span>Start Your Career Analysis</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </section>
+
             {/* Privacy note */}
             <div className="flex items-start gap-2 max-w-md mx-auto text-xs text-slate-500 bg-slate-900/40 border border-slate-800/60 rounded-lg p-3 text-left my-12 relative z-10">
               <AlertCircle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
@@ -1688,7 +1887,12 @@ export default function App() {
             </div>
 
             {currentView === 'coach' ? (
-              <AICareerCoach currentResume={resume} username={githubUsername || (resume && resume.name) || "scanned_username"} />
+              <AICareerCoach 
+                currentResume={resume} 
+                username={githubUsername || (resume && resume.name) || "scanned_username"}
+                isAuthenticated={isAuthenticated}
+                onRequestAuth={handleGithubConnect}
+              />
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch flex-1">
             
