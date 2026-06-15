@@ -18,11 +18,36 @@ service cloud.firestore {
         && data.lastUpdated is string && data.lastUpdated.size() <= 100;
     }
 
-    // Resumes match block
+    function isValidChatMessage(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.sender is string && (data.sender == 'user' || data.sender == 'assistant')
+        && data.text is string && data.text.size() <= 10000
+        && data.timestamp is string && data.timestamp.size() <= 100;
+    }
+
+    // Resumes match block - Allow public read access for resume profiles
     match /resumes/{username} {
-      allow read: if isValidId(username); // Allows get, list, and onSnapshot listeners
+      // Allow anyone to read resumes (public profiles)
+      // This includes get, list, and real-time listeners (onSnapshot)
+      allow get, list: if true;
+      
+      // Allow create/update with validation
       allow create, update: if isValidId(username) && isValidResume(incoming());
+      
+      // Never allow delete
       allow delete: if false;
+    }
+
+    // Chat history for resume co-pilot - nested under resumes
+    match /resumes/{username}/chatHistory/{messageId} {
+      // Allow public read for chat history (so resume viewers can see conversation context)
+      allow get, list: if true;
+      
+      // Allow create/update with validation
+      allow create, update: if isValidId(username) && isValidChatMessage(incoming());
+      
+      // Allow delete (for clearing chat history)
+      allow delete: if true;
     }
 
     // Default deny for every other collection.

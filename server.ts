@@ -166,7 +166,7 @@ app.get('/api/auth/github/url', (req, res) => {
 
   const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(
     redirectUri
-  )}&scope=repo,user`;
+  )}&scope=repo,user,admin:repo_hook`;
 
   res.json({ url: authUrl });
 });
@@ -649,14 +649,17 @@ app.post('/api/github/analyze', async (req, res) => {
 
       const reposData = reposRes.ok ? await reposRes.json() : [];
       if (Array.isArray(reposData)) {
-        activity.repositories = reposData.map((r: any) => ({
-          name: r.name,
-          description: r.description || null,
-          language: r.language || null,
-          stars: r.stargazers_count || 0,
-          updatedAt: r.updated_at,
-          url: r.html_url
-        }));
+        // Filter out the user's README repository (username/username)
+        activity.repositories = reposData
+          .filter((r: any) => r.name.toLowerCase() !== loginName.toLowerCase())
+          .map((r: any) => ({
+            name: r.name,
+            description: r.description || null,
+            language: r.language || null,
+            stars: r.stargazers_count || 0,
+            updatedAt: r.updated_at,
+            url: r.html_url
+          }));
       }
 
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
@@ -691,14 +694,17 @@ app.post('/api/github/analyze', async (req, res) => {
       }
       const reposData = await reposRes.json();
       if (Array.isArray(reposData)) {
-        activity.repositories = reposData.map((r: any) => ({
-          name: r.name,
-          description: r.description || null,
-          language: r.language || null,
-          stars: r.stargazers_count || 0,
-          updatedAt: r.updated_at,
-          url: r.html_url
-        }));
+        // Filter out the user's README repository (username/username)
+        activity.repositories = reposData
+          .filter((r: any) => r.name.toLowerCase() !== cleanedUser.toLowerCase())
+          .map((r: any) => ({
+            name: r.name,
+            description: r.description || null,
+            language: r.language || null,
+            stars: r.stargazers_count || 0,
+            updatedAt: r.updated_at,
+            url: r.html_url
+          }));
       }
 
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
@@ -717,6 +723,8 @@ You highlight real skills. You avoid generic fluffy summaries, and focus on prac
 
 Crucial rules:
 - Extract and list exact technologies (languages, frameworks, databases, and tools) discovered from their repos and languages tags.
+- NEVER invent contact details (location, email, phone, age). Omit the contact object entirely unless real data exists in the source — users will add these manually.
+- Do NOT include placeholder addresses, fake emails, or labels like "Fully Analyzed Profile".
 - For Projects: select their top 2-3 most relevant coding repositories. Provide 3 high-impact bullets per project describing:
   1. Primary design characteristics & technologies.
   2. Concrete developer problem solved or feature implemented based on actual commits, if any (or synthesize reasonable real-world engineering actions).
@@ -739,6 +747,7 @@ Return EXACTLY a JSON format mapping this strict schema:
   "title": string (e.g. "TypeScript Systems Engineer", "Backend Developer", "Front-End Engineer" depending on top tools found),
   "slogan": string (a custom catchy slogan based on their projects, e.g. "Weaving clean UI architectures"),
   "summary": string (a comprehensive 3-sentence summary of they key specializations, code characteristics, and systems knowledge),
+  "contact": optional object — ONLY include fields with real verified data, never placeholders: { "location"?: string, "email"?: string, "phone"?: string, "website"?: string, "linkedin"?: string, "github"?: string, "age"?: string, "languages"?: string[] },
   "skills": {
     "languages": string[],
     "frameworks": string[],
@@ -817,7 +826,9 @@ Key capabilities requested:
 1. Append language, databases, tools, or frameworks elements to their respective arrays.
 2. Rewrite summary/introduction for specific keywords or targets (such as: an internship, backend engineer position, or enterprise scale).
 3. Expand project descriptions, adding technical elements safely.
-4. Correct layout spelling or restructure wording beautifully.
+4. Update contact fields (location, email, phone, age, spoken languages, linkedin, website, github) when the user provides them.
+5. Correct layout spelling or restructure wording beautifully.
+6. Never invent contact information the user did not provide.
 
 You MUST output your response in JSON format keeping to this EXACT interface:
 {
@@ -948,6 +959,263 @@ Respond in character as Alistair 'The Vet' Vance. Keep it authentic and deep.`;
   } catch (error: any) {
     console.error('Error in coach chat:', error);
     res.status(500).json({ error: error.message || 'Mentor communication failed' });
+  }
+});
+
+
+// --- GET ALL USER REPOSITORIES (FOR REPOSITORY MANAGEMENT) ---
+
+app.get('/api/github/repos', async (req, res) => {
+  const { username } = req.query;
+  
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  const cleanedUser = username.toString().trim().replace(/@/g, '');
+  
+  const headers: Record<string, string> = {
+    'User-Agent': 'CommitCV-App',
+    'Accept': 'application/vnd.github.v3+json'
+  };
+
+  // Use developer token if available for higher rate limits
+  if (process.env.GITHUB_TOKEN) {
+    headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+  }
+
+  try {
+    console.log(`Fetching all repositories for user: ${cleanedUser}`);
+    
+    // Fetch up to 100 repositories
+    const reposRes = await fetchWithTimeout(
+      `https://api.github.com/users/${cleanedUser}/repos?sort=updated&per_page=100&type=owner`,
+      { headers },
+      GITHUB_TIMEOUT_MS
+    );
+
+    if (!reposRes.ok) {
+      throw new Error(`Failed to fetch repositories: ${reposRes.statusText}`);
+    }
+
+    const reposData = await reposRes.json();
+    
+    if (!Array.isArray(reposData)) {
+      throw new Error('Invalid response from GitHub API');
+    }
+
+    // Filter out the user's README repository (username/username)
+    const repositories = reposData
+      .filter((r: any) => r.name.toLowerCase() !== cleanedUser.toLowerCase())
+      .map((r: any) => ({
+        name: r.name,
+        description: r.description || null,
+        language: r.language || null,
+        stars: r.stargazers_count || 0,
+        updatedAt: r.updated_at,
+        url: r.html_url,
+        fork: r.fork || false
+      }));
+
+    res.json({ repositories });
+  } catch (error: any) {
+    console.error('Error fetching repositories:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch repositories' });
+  }
+});
+
+// --- GITHUB WEBHOOK CONFIGURATION API ---
+
+app.post('/api/webhook/setup', async (req, res) => {
+  const { token, username } = req.body;
+
+  if (!token) {
+    return res.status(400).json({ error: 'GitHub token is required' });
+  }
+
+  const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+  const webhookUrl = `${baseUrl.replace(/\/$/, '')}/api/webhook/github?username=${username}`;
+
+  try {
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'CommitCV-App'
+    };
+
+    // Get user's repositories
+    const reposResponse = await fetchWithTimeout('https://api.github.com/user/repos?per_page=100&affiliation=owner', 
+      { headers }, 
+      GITHUB_TIMEOUT_MS
+    );
+
+    if (!reposResponse.ok) {
+      throw new Error(`Failed to fetch repositories: ${reposResponse.statusText}`);
+    }
+
+    const repos = await reposResponse.json();
+    const results: Array<{ repo: string; success: boolean; error?: string; hookId?: number }> = [];
+
+    // Configure webhook for each repository
+    for (const repo of repos) {
+      try {
+        // Check if webhook already exists
+        const hooksResponse = await fetchWithTimeout(
+          `https://api.github.com/repos/${repo.full_name}/hooks`,
+          { headers },
+          GITHUB_TIMEOUT_MS
+        );
+
+        if (hooksResponse.ok) {
+          const existingHooks = await hooksResponse.json();
+          const existingHook = existingHooks.find((hook: any) => 
+            hook.config?.url === webhookUrl
+          );
+
+          if (existingHook) {
+            results.push({ 
+              repo: repo.name, 
+              success: true, 
+              hookId: existingHook.id,
+              error: 'Webhook already exists'
+            });
+            continue;
+          }
+        }
+
+        // Create new webhook
+        const createResponse = await fetchWithTimeout(
+          `https://api.github.com/repos/${repo.full_name}/hooks`,
+          {
+            method: 'POST',
+            headers: {
+              ...headers,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: 'web',
+              active: true,
+              events: ['push'],
+              config: {
+                url: webhookUrl,
+                content_type: 'json',
+                insecure_ssl: '0'
+              }
+            })
+          },
+          GITHUB_TIMEOUT_MS
+        );
+
+        if (createResponse.ok) {
+          const hookData = await createResponse.json();
+          results.push({ 
+            repo: repo.name, 
+            success: true,
+            hookId: hookData.id
+          });
+        } else {
+          const errorData = await createResponse.json();
+          results.push({ 
+            repo: repo.name, 
+            success: false, 
+            error: errorData.message || 'Failed to create webhook'
+          });
+        }
+      } catch (error: any) {
+        results.push({ 
+          repo: repo.name, 
+          success: false, 
+          error: error.message || 'Unknown error'
+        });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failureCount = results.filter(r => !r.success).length;
+
+    return res.json({
+      success: true,
+      message: `Configured webhooks for ${successCount} repositories${failureCount > 0 ? ` (${failureCount} failed)` : ''}`,
+      totalRepos: repos.length,
+      successCount,
+      failureCount,
+      results
+    });
+
+  } catch (error: any) {
+    console.error('Error setting up webhooks:', error);
+    return res.status(500).json({ 
+      error: error.message || 'Failed to setup webhooks' 
+    });
+  }
+});
+
+app.get('/api/webhook/status', async (req, res) => {
+  const { token } = req.query;
+
+  if (!token) {
+    return res.status(400).json({ error: 'GitHub token is required' });
+  }
+
+  const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+  const webhookUrlPrefix = `${baseUrl.replace(/\/$/, '')}/api/webhook/github`;
+
+  try {
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'CommitCV-App'
+    };
+
+    // Get user's repositories
+    const reposResponse = await fetchWithTimeout('https://api.github.com/user/repos?per_page=100&affiliation=owner', 
+      { headers }, 
+      GITHUB_TIMEOUT_MS
+    );
+
+    if (!reposResponse.ok) {
+      throw new Error(`Failed to fetch repositories: ${reposResponse.statusText}`);
+    }
+
+    const repos = await reposResponse.json();
+    let totalRepos = repos.length;
+    let reposWithWebhook = 0;
+
+    // Check each repository for webhooks
+    for (const repo of repos) {
+      try {
+        const hooksResponse = await fetchWithTimeout(
+          `https://api.github.com/repos/${repo.full_name}/hooks`,
+          { headers },
+          GITHUB_TIMEOUT_MS
+        );
+
+        if (hooksResponse.ok) {
+          const hooks = await hooksResponse.json();
+          const hasWebhook = hooks.some((hook: any) => 
+            hook.config?.url?.startsWith(webhookUrlPrefix)
+          );
+          if (hasWebhook) {
+            reposWithWebhook++;
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to check hooks for ${repo.name}:`, error);
+      }
+    }
+
+    return res.json({
+      enabled: reposWithWebhook > 0,
+      totalRepos,
+      reposWithWebhook,
+      coverage: totalRepos > 0 ? Math.round((reposWithWebhook / totalRepos) * 100) : 0
+    });
+
+  } catch (error: any) {
+    console.error('Error checking webhook status:', error);
+    return res.status(500).json({ 
+      error: error.message || 'Failed to check webhook status' 
+    });
   }
 });
 

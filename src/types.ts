@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { ResumeFormatId } from './resumeFormats';
+
 export interface GitHubActivity {
   repositories: Array<{
     name: string;
@@ -60,11 +62,26 @@ export interface OpenSourceContribution {
   highlight: string;
 }
 
+export interface ResumeContact {
+  location?: string;
+  email?: string;
+  phone?: string;
+  website?: string;
+  linkedin?: string;
+  github?: string;
+  twitter?: string;
+  instagram?: string;
+  facebook?: string;
+  age?: string;
+  languages?: string[];
+}
+
 export interface CommitCVResume {
   name: string;
   title: string;
   slogan: string;
   summary: string;
+  contact?: ResumeContact;
   skills: TechSkills;
   projects: ResumeProject[];
   openSourceSummary: string;
@@ -75,7 +92,10 @@ export interface CommitCVResume {
     pullRequestsCount: number;
     issuesCount: number;
   };
-  lastUpdated: string; // e.g. "Just now" or "2 minutes ago"
+  lastUpdated: string | number; // timestamp in ms or legacy string
+  resumeFormat?: ResumeFormatId;
+  fontSize?: '10pt' | '11pt' | '12pt';
+  fontFamily?: 'Georgia' | 'Times New Roman' | 'Arial' | 'Helvetica' | 'Calibri';
   avatarUrl?: string;
   latestPush?: {
     repository: string;
@@ -96,4 +116,25 @@ export interface ResumeChatState {
   resume: CommitCVResume;
   messages: ChatMessage[];
   isLoading: boolean;
+}
+
+export interface WebhookSetupResult {
+  success: boolean;
+  message: string;
+  totalRepos: number;
+  successCount: number;
+  failureCount: number;
+  results: Array<{
+    repo: string;
+    success: boolean;
+    error?: string;
+    hookId?: number;
+  }>;
+}
+
+export interface WebhookStatus {
+  enabled: boolean;
+  totalRepos: number;
+  reposWithWebhook: number;
+  coverage: number;
 }

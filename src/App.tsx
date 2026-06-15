@@ -22,12 +22,22 @@ import {
   Clipboard,
   FileText,
   CheckCircle2,
-  Clock
+  Clock,
+  LayoutTemplate,
+  Save
 } from 'lucide-react';
-import { CommitCVResume, ChatMessage } from './types';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { CommitCVResume, ChatMessage, ResumeContact } from './types';
+import { doc, getDoc, setDoc, onSnapshot, collection, addDoc, query, orderBy, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import AICareerCoach from './components/AICareerCoach';
+import ResumePreview from './components/ResumePreview';
+import {
+  DEFAULT_RESUME_FORMAT,
+  RESUME_FORMAT_OPTIONS,
+  ResumeFormatId,
+  getResumeFormatOption,
+  resolveResumeFormat,
+} from './resumeFormats';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
@@ -62,11 +72,75 @@ export default function App() {
   const [customCommitMessage, setCustomCommitMessage] = useState<string>('feat: add Redis cache, Dockerize application, design REST APIs');
   const [simulating, setSimulating] = useState<boolean>(false);
   const [copiedWebhookUrl, setCopiedWebhookUrl] = useState<boolean>(false);
-  const [showSetupGuide, setShowSetupGuide] = useState<boolean>(false);
   const [copiedCallbackUrl, setCopiedCallbackUrl] = useState<boolean>(false);
   const [copiedHomepageUrl, setCopiedHomepageUrl] = useState<boolean>(false);
   const [showTryItOutModal, setShowTryItOutModal] = useState<boolean>(false);
   const [firestoreAvailable, setFirestoreAvailable] = useState<boolean>(true);
+  const [selectedFormat, setSelectedFormat] = useState<ResumeFormatId>(DEFAULT_RESUME_FORMAT);
+
+  // Auto-close "Try It Out" modal when resume is successfully loaded
+  useEffect(() => {
+    if (resume && showTryItOutModal) {
+      setShowTryItOutModal(false);
+    }
+  }, [resume, showTryItOutModal]);
+
+  // Update relative time display every minute
+  useEffect(() => {
+    if (!resume || typeof resume.lastUpdated !== 'number') return;
+    
+    const interval = setInterval(() => {
+      // Force re-render to update relative time
+      setResume((prev) => prev ? { ...prev } : prev);
+    }, 60000); // Update every minute
+    
+    return () => clearInterval(interval);
+  }, [resume?.lastUpdated]);
+  const [contactDraft, setContactDraft] = useState({
+    name: '',
+    location: '',
+    email: '',
+    age: '',
+    languages: '',
+  });
+  const [socialMediaDraft, setSocialMediaDraft] = useState({
+    linkedin: '',
+    twitter: '',
+    instagram: '',
+    facebook: '',
+  });
+  const [selectedRepoId, setSelectedRepoId] = useState<string>('');
+  const [repoAction, setRepoAction] = useState<'description' | 'tech-stack'>('description');
+  const [showContactDetails, setShowContactDetails] = useState<boolean>(false);
+  const [showRepoActions, setShowRepoActions] = useState<boolean>(false);
+  const [showOpenSource, setShowOpenSource] = useState<boolean>(false);
+  const [showSocialMedia, setShowSocialMedia] = useState<boolean>(false);
+  const [showFontSettings, setShowFontSettings] = useState<boolean>(false);
+  const [allUserRepos, setAllUserRepos] = useState<Array<{id: string, name: string, inResume: boolean}>>([]);
+  const [savingChat, setSavingChat] = useState<boolean>(false);
+  const [chatHistoryLoaded, setChatHistoryLoaded] = useState<boolean>(false);
+  
+  // Webhook state
+  const [webhookEnabled, setWebhookEnabled] = useState<boolean>(false);
+  const [webhookStatus, setWebhookStatus] = useState<{ totalRepos: number; reposWithWebhook: number; coverage: number } | null>(null);
+  const [settingUpWebhook, setSettingUpWebhook] = useState<boolean>(false);
+  const [showWebhookModal, setShowWebhookModal] = useState<boolean>(false);
+
+  // Helper function to get relative time
+  const getRelativeTime = (timestamp: number): string => {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (seconds < 60) return 'Just now';
+    if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+    if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+    if (days < 30) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
 
   // Memoize contribution grid cells to prevent re-renders that conflict with GSAP
   const contributionCells = useMemo(() => 
@@ -227,8 +301,8 @@ export default function App() {
         const problemTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".problem-section",
-            start: "top center+=150",
-            end: "bottom center-=150",
+            start: "top center-=250",
+            end: "bottom center+=250",
             scrub: true
           }
         });
@@ -252,8 +326,8 @@ export default function App() {
         const connectTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".connect-section",
-            start: "top center+=250",
-            end: "bottom center+=100",
+            start: "top center",
+            end: "bottom center",
             scrub: true
           }
         });
@@ -298,8 +372,8 @@ export default function App() {
         const analysisTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".analysis-section",
-            start: "top center",
-            end: "bottom center",
+            start: "top center-=200",
+            end: "bottom center+=250",
             scrub: true
           }
         });
@@ -336,8 +410,8 @@ export default function App() {
         const livingTl = gsap.timeline({
           scrollTrigger: {
             trigger: ".living-resume-section",
-            start: "top center+=150",
-            end: "bottom center-=150",
+            start: "top center-=300",
+            end: "bottom center+=400",
             scrub: true
           }
         });
@@ -476,14 +550,7 @@ export default function App() {
           const loadedResume = docSnap.data() as CommitCVResume;
           setResume(loadedResume);
           setGithubUsername(targetUsername);
-          setMessages([
-            {
-              id: 'system-init',
-              sender: 'assistant',
-              text: `📂 Saved Resume for **${loadedResume.name}** loaded from Firebase Firestore! If you want to pull fresh live Git commits, click the "Re-sync Live Git" button above.`,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            }
-          ]);
+          setChatHistoryLoaded(false); // Reset to allow loading chat history
           setLoading(false);
           return;
         }
@@ -524,14 +591,7 @@ export default function App() {
           }
         }
 
-        setMessages([
-          {
-            id: 'system-init',
-            sender: 'assistant',
-            text: `✨ Resume generated successfully! Raw commits and repositories translated into a dynamic profile for **${data.resume.name}** and securely saved in Firebase Firestore. What would you like to edit next?`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ]);
+        setChatHistoryLoaded(false); // Allow chat history to load
       } else {
         throw new Error(data.error || 'Failed to complete resume analysis.');
       }
@@ -553,13 +613,14 @@ export default function App() {
     }
 
     const newUserMessage: ChatMessage = {
-      id: Math.random().toString(),
+      id: `user-${Date.now()}`,
       sender: 'user',
       text: query,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setMessages(prev => [...prev, newUserMessage]);
+    const updatedMessages = [...messages, newUserMessage];
+    setMessages(updatedMessages);
     setIsChatLoading(true);
 
     try {
@@ -590,15 +651,21 @@ export default function App() {
           }
         }
 
-        setMessages(prev => [
-          ...prev,
-          {
-            id: Math.random().toString(),
-            sender: 'assistant',
-            text: data.chatResponse || "Resume updated to reflect changes successfully.",
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ]);
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          sender: 'assistant',
+          text: data.chatResponse || "Resume updated to reflect changes successfully.",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+        
+        // Save chat history to Firestore
+        const username = githubUsername || data.updatedResume.name;
+        if (username) {
+          await saveChatHistory(username, finalMessages);
+        }
         
         // Scan query for added technologies to sparkle them visually on screen
         const words = query.toLowerCase().split(/\s+/);
@@ -614,15 +681,20 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: Math.random().toString(),
-          sender: 'assistant',
-          text: `Error updating the resume structure: ${err.message || 'API query error'}. Let's re-try another request.`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
+      const errorMessage: ChatMessage = {
+        id: `error-${Date.now()}`,
+        sender: 'assistant',
+        text: `Error updating the resume structure: ${err.message || 'API query error'}. Let's re-try another request.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      const finalMessages = [...updatedMessages, errorMessage];
+      setMessages(finalMessages);
+      
+      // Save even error messages
+      const username = githubUsername || resume?.name;
+      if (username) {
+        await saveChatHistory(username, finalMessages);
+      }
     } finally {
       setIsChatLoading(false);
     }
@@ -635,14 +707,384 @@ export default function App() {
     setTimeout(() => setClipboardCopied(false), 2000);
   };
 
+  const persistResume = async (updatedResume: CommitCVResume) => {
+    const finalUsername = (githubUsername || updatedResume.name).trim().replace(/@/g, '');
+    if (!firestoreAvailable || !finalUsername) return;
+    try {
+      await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), updatedResume);
+    } catch (firebaseErr: any) {
+      console.error('Failed to sync resume to Firebase Firestore:', firebaseErr);
+      if (firebaseErr?.code === 'permission-denied') {
+        setFirestoreAvailable(false);
+      }
+      throw firebaseErr;
+    }
+  };
+
+  // Save chat history to Firestore
+  const saveChatHistory = async (username: string, chatMessages: ChatMessage[]) => {
+    if (!firestoreAvailable || !username) return;
+    const cleanUsernameLower = username.trim().replace(/@/g, '').toLowerCase();
+    
+    setSavingChat(true);
+    try {
+      // Save each message as a document in the chatHistory subcollection
+      const chatHistoryRef = collection(db, 'resumes', cleanUsernameLower, 'chatHistory');
+      
+      // Clear existing messages first
+      const existingQuery = query(chatHistoryRef);
+      const existingDocs = await getDocs(existingQuery);
+      const deletePromises = existingDocs.docs.map(docSnap => deleteDoc(docSnap.ref));
+      await Promise.all(deletePromises);
+      
+      // Add new messages
+      const savePromises = chatMessages.map(msg => 
+        setDoc(doc(chatHistoryRef, msg.id), msg)
+      );
+      await Promise.all(savePromises);
+      
+      console.log(`Saved ${chatMessages.length} chat messages for ${cleanUsernameLower}`);
+    } catch (err: any) {
+      console.error('Failed to save chat history:', err);
+      if (err?.code === 'permission-denied') {
+        setFirestoreAvailable(false);
+      }
+    } finally {
+      setSavingChat(false);
+    }
+  };
+
+  // Load chat history from Firestore
+  const loadChatHistory = async (username: string) => {
+    if (!firestoreAvailable || !username) return [];
+    const cleanUsernameLower = username.trim().replace(/@/g, '').toLowerCase();
+    
+    try {
+      const chatHistoryRef = collection(db, 'resumes', cleanUsernameLower, 'chatHistory');
+      const q = query(chatHistoryRef, orderBy('timestamp', 'asc'));
+      const querySnapshot = await getDocs(q);
+      
+      const loadedMessages: ChatMessage[] = [];
+      querySnapshot.forEach((docSnap) => {
+        loadedMessages.push(docSnap.data() as ChatMessage);
+      });
+      
+      console.log(`Loaded ${loadedMessages.length} chat messages for ${cleanUsernameLower}`);
+      return loadedMessages;
+    } catch (err: any) {
+      console.error('Failed to load chat history:', err);
+      if (err?.code === 'permission-denied') {
+        setFirestoreAvailable(false);
+      }
+      return [];
+    }
+  };
+
+  // Clear chat history
+  const clearChatHistory = async () => {
+    if (!githubUsername && !resume?.name) return;
+    const username = githubUsername || resume?.name || '';
+    const cleanUsernameLower = username.trim().replace(/@/g, '').toLowerCase();
+    
+    try {
+      if (firestoreAvailable) {
+        const chatHistoryRef = collection(db, 'resumes', cleanUsernameLower, 'chatHistory');
+        const q = query(chatHistoryRef);
+        const querySnapshot = await getDocs(q);
+        const deletePromises = querySnapshot.docs.map(docSnap => deleteDoc(docSnap.ref));
+        await Promise.all(deletePromises);
+      }
+      setMessages([]);
+      setChatHistoryLoaded(false);
+    } catch (err: any) {
+      console.error('Failed to clear chat history:', err);
+      setErrorBanner('Failed to clear chat history.');
+    }
+  };
+
+  // Check webhook status
+  const checkWebhookStatus = async () => {
+    if (!githubToken) return;
+    
+    try {
+      const response = await fetch(`/api/webhook/status?token=${encodeURIComponent(githubToken)}`);
+      const data = await response.json();
+      
+      if (response.ok) {
+        setWebhookEnabled(data.enabled);
+        setWebhookStatus({
+          totalRepos: data.totalRepos,
+          reposWithWebhook: data.reposWithWebhook,
+          coverage: data.coverage
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to check webhook status:', err);
+    }
+  };
+
+  // Setup webhooks for all repositories
+  const setupWebhooks = async () => {
+    if (!githubToken || !githubUsername) return;
+    
+    setSettingUpWebhook(true);
+    setErrorBanner(null);
+    
+    try {
+      const response = await fetch('/api/webhook/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: githubToken,
+          username: githubUsername
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setWebhookEnabled(true);
+        setWebhookStatus({
+          totalRepos: data.totalRepos,
+          reposWithWebhook: data.successCount,
+          coverage: Math.round((data.successCount / data.totalRepos) * 100)
+        });
+        
+        // Show success message
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `webhook-setup-${Date.now()}`,
+            sender: 'assistant',
+            text: `🎉 **实时更新已启用！**\n\n✅ 成功配置了 ${data.successCount} 个仓库的 Webhooks\n${data.failureCount > 0 ? `⚠️ ${data.failureCount} 个仓库配置失败\n` : ''}\n现在每次你 push 代码，你的简历都会自动更新！🚀`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+        
+        setShowWebhookModal(false);
+      } else {
+        throw new Error(data.error || 'Failed to setup webhooks');
+      }
+    } catch (err: any) {
+      console.error('Failed to setup webhooks:', err);
+      setErrorBanner(`Webhook 配置失败: ${err.message}`);
+    } finally {
+      setSettingUpWebhook(false);
+    }
+  };
+
+  // Check webhook status when authenticated
+  useEffect(() => {
+    if (isAuthenticated && githubToken && resume) {
+      checkWebhookStatus();
+    }
+  }, [isAuthenticated, githubToken, resume]);
+
+  const handleFormatChange = async (formatId: ResumeFormatId) => {
+    if (!resume || formatId === selectedFormat) return;
+    setSelectedFormat(formatId);
+    const updatedResume: CommitCVResume = {
+      ...resume,
+      resumeFormat: formatId,
+      lastUpdated: Date.now(),
+    };
+    setResume(updatedResume);
+    try {
+      await persistResume(updatedResume);
+    } catch {
+      setErrorBanner('Failed to save resume format to Firestore. Please try again.');
+    }
+  };
+
+  // Sync format selector when resume loads from Firestore or API
+  useEffect(() => {
+    setSelectedFormat(resolveResumeFormat(resume?.resumeFormat));
+  }, [resume?.resumeFormat, resume?.name]);
+
+  useEffect(() => {
+    if (!resume) return;
+    setContactDraft({
+      name: resume.name || '',
+      location: resume.contact?.location || '',
+      email: resume.contact?.email || '',
+      age: resume.contact?.age || '',
+      languages: resume.contact?.languages?.join(', ') || '',
+    });
+    setSocialMediaDraft({
+      linkedin: resume.contact?.linkedin || '',
+      twitter: resume.contact?.twitter || '',
+      instagram: resume.contact?.instagram || '',
+      facebook: resume.contact?.facebook || '',
+    });
+    if (resume.projects?.length) {
+      setSelectedRepoId((prev) =>
+        prev && resume.projects.some((p) => p.id === prev) ? prev : resume.projects[0].id
+      );
+    }
+  }, [resume?.name, resume?.contact, resume?.projects]);
+
+  // Fetch all user repositories when resume is loaded
+  useEffect(() => {
+    if (!resume || !githubUsername) return;
+    
+    const fetchAllRepos = async () => {
+      try {
+        const response = await fetch(`/api/github/repos?username=${encodeURIComponent(githubUsername)}`);
+        if (response.ok) {
+          const data = await response.json();
+          const repos = data.repositories || [];
+          // Mark which repos are currently in resume
+          const repoList = repos
+            .filter((r: any) => r.name.toLowerCase() !== githubUsername.toLowerCase()) // Exclude README repo
+            .map((r: any) => ({
+              id: r.name,
+              name: r.name,
+              inResume: resume.projects.some(p => p.name === r.name)
+            }));
+          setAllUserRepos(repoList);
+        }
+      } catch (err) {
+        console.error('Failed to fetch all repositories:', err);
+      }
+    };
+    
+    fetchAllRepos();
+  }, [resume?.name, githubUsername]);
+
+  // Load chat history when resume is loaded
+  useEffect(() => {
+    if (!resume || chatHistoryLoaded || !githubUsername) return;
+    
+    const loadHistory = async () => {
+      const history = await loadChatHistory(githubUsername || resume.name);
+      if (history.length > 0) {
+        setMessages(history);
+        setChatHistoryLoaded(true);
+      } else {
+        // Set initial system message if no history exists
+        setMessages([
+          {
+            id: 'system-init',
+            sender: 'assistant',
+            text: `✨ Resume loaded for **${resume.name}**! I'm ready to help you customize your CV. What would you like to edit?`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+        setChatHistoryLoaded(true);
+      }
+    };
+    
+    loadHistory();
+  }, [resume?.name, githubUsername, chatHistoryLoaded]);
+
+  const applyContactField = async (field: keyof typeof contactDraft) => {
+    if (!resume) return;
+    const raw = contactDraft[field].trim();
+    
+    if (field === 'name') {
+      const updatedResume: CommitCVResume = {
+        ...resume,
+        name: raw || resume.name,
+        lastUpdated: Date.now(),
+      };
+      setResume(updatedResume);
+      try {
+        await persistResume(updatedResume);
+      } catch {
+        setErrorBanner('Failed to save name to Firestore.');
+      }
+      return;
+    }
+    
+    const contact: ResumeContact = { ...(resume.contact || {}) };
+
+    if (field === 'languages') {
+      if (raw) {
+        contact.languages = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      } else {
+        delete contact.languages;
+      }
+    } else if (raw) {
+      contact[field] = raw;
+    } else {
+      delete contact[field];
+    }
+
+    const updatedResume: CommitCVResume = {
+      ...resume,
+      contact: Object.keys(contact).length ? contact : undefined,
+      lastUpdated: Date.now(),
+    };
+    setResume(updatedResume);
+    try {
+      await persistResume(updatedResume);
+    } catch {
+      setErrorBanner('Failed to save contact details to Firestore.');
+    }
+  };
+
+  const handleRepoEnhancement = () => {
+    if (!resume || !selectedRepoId) return;
+    const project = resume.projects.find((p) => p.id === selectedRepoId);
+    if (!project) return;
+
+    if (repoAction === 'description') {
+      handleSendMessage(
+        `Improve and expand the description bullets for the project "${project.name}". Keep facts grounded in the existing tech stack (${project.techStack.join(', ') || 'unknown'}). Use Action + Technology + Result style with metrics where reasonable.`
+      );
+    } else {
+      handleSendMessage(
+        `Update the tech stack for project "${project.name}" based on its descriptions and repository context. Add missing but plausible technologies; remove generic filler. Current stack: ${project.techStack.join(', ') || 'none'}.`
+      );
+    }
+  };
+  
+  const handleRepoToggle = async (repoId: string, shouldAdd: boolean) => {
+    if (!resume) return;
+    
+    if (shouldAdd) {
+      // Add repository to resume
+      handleSendMessage(
+        `Add the repository "${repoId}" to my resume projects. Analyze it and create a professional project entry with appropriate role, tech stack, and 3 description bullets following our standard format.`
+      );
+    } else {
+      // Remove repository from resume
+      const updatedProjects = resume.projects.filter(p => p.name !== repoId && p.id !== repoId);
+      const updatedResume: CommitCVResume = {
+        ...resume,
+        projects: updatedProjects,
+        lastUpdated: Date.now(),
+      };
+      setResume(updatedResume);
+      try {
+        await persistResume(updatedResume);
+        // Update local repo list
+        setAllUserRepos(prev => prev.map(r => 
+          r.name === repoId ? { ...r, inResume: false } : r
+        ));
+      } catch {
+        setErrorBanner('Failed to remove repository from Firestore.');
+      }
+    }
+  };
+
   const triggerPrint = () => {
-    window.print();
+    if (!resume) return;
+    const runPrint = () => window.print();
+    if (activeTab !== 'preview') {
+      setActiveTab('preview');
+      requestAnimationFrame(() => setTimeout(runPrint, 100));
+      return;
+    }
+    runPrint();
   };
 
   const handleReset = () => {
     setResume(null);
     setNewlyAddedSkills([]);
     setGithubUsername('');
+    setMessages([]);
+    setChatHistoryLoaded(false);
   };
 
   const handleSimulatePush = async (customMessage?: string) => {
@@ -687,7 +1129,7 @@ export default function App() {
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-35" />
       
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md relative z-10 sticky top-0 px-4 py-3">
+      <header className="no-print border-b border-slate-800 bg-slate-900/60 backdrop-blur-md relative z-10 sticky top-0 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img src="/logo.png" alt="CommitCV Logo" className="h-9 w-auto object-contain rounded-lg shadow-md" />
@@ -1178,7 +1620,7 @@ export default function App() {
           <div className="flex flex-col gap-6 flex-1">
             
             {/* Beautiful Navigation Tabs inside Dashboard Workspace */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-4 gap-3">
+            <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-4 gap-3">
               <div className="flex items-center gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-850 self-start">
                 <button
                   onClick={() => setCurrentView('cv')}
@@ -1208,8 +1650,40 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-                <span>Active Profile Context: <strong className="text-slate-300">@{githubUsername || (resume && resume.name) || "scanned_developer"}</strong></span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
+                  <span>Active Profile Context: <strong className="text-slate-300">@{githubUsername || (resume && resume.name) || "scanned_developer"}</strong></span>
+                </div>
+                
+                {/* Real-time Webhook Status & Setup Button */}
+                {isAuthenticated && githubToken && (
+                  <div className="flex items-center gap-2">
+                    {webhookEnabled ? (
+                      <div className="flex items-center gap-2 bg-emerald-950/30 border border-emerald-800/50 rounded-lg px-3 py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </span>
+                          <span className="text-[11px] text-emerald-400 font-semibold">实时更新已启用</span>
+                        </div>
+                        {webhookStatus && (
+                          <span className="text-[10px] text-emerald-300/70 font-mono">
+                            {webhookStatus.reposWithWebhook}/{webhookStatus.totalRepos} repos
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setShowWebhookModal(true)}
+                        className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-105"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>启用实时更新</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1219,7 +1693,7 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch flex-1">
             
             {/* LEFT COLUMN: CHAT COPILOT ONLY (5 cols) */}
-            <div className="lg:col-span-5 flex flex-col">
+            <div className="no-print lg:col-span-5 flex flex-col">
               
               {/* Resume Chat Copilot - Pristine layout taking full height */}
               <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex-1 flex flex-col relative overflow-hidden min-h-[450px]">
@@ -1232,9 +1706,24 @@ export default function App() {
                       <p className="text-[10px] text-slate-400">Instruct Gemini to adjust your CV instantly</p>
                     </div>
                   </div>
-                  <span className="bg-slate-950 text-slate-400 font-mono text-[10px] px-2.5 py-0.5 rounded border border-slate-800">
-                    Online
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {savingChat && (
+                      <span className="text-[9px] text-brand-cyan font-mono flex items-center gap-1">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        Saving...
+                      </span>
+                    )}
+                    <button
+                      onClick={clearChatHistory}
+                      className="text-[10px] bg-slate-950 hover:bg-red-950/30 border border-slate-800 hover:border-red-800 text-slate-400 hover:text-red-400 px-2 py-1 rounded transition"
+                      title="Clear chat history"
+                    >
+                      Clear
+                    </button>
+                    <span className="bg-slate-950 text-slate-400 font-mono text-[10px] px-2.5 py-0.5 rounded border border-slate-800">
+                      Online
+                    </span>
+                  </div>
                 </div>
 
                 {/* Messages Panel */}
@@ -1265,9 +1754,39 @@ export default function App() {
                 </div>
 
                 {/* Predefined prompt controls */}
-                <div className="mb-4">
-                  <p className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2 text-left">Quick tuning actions</p>
+                <div className="mb-4 space-y-3">
+                  <p className="text-[10px] font-mono text-slate-500 uppercase tracking-wider text-left">Quick tuning</p>
                   <div className="flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => setShowContactDetails(!showContactDetails)}
+                      className={`text-[10px] ${showContactDetails ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
+                    >
+                      📝 Contact Details
+                    </button>
+                    <button
+                      onClick={() => setShowRepoActions(!showRepoActions)}
+                      className={`text-[10px] ${showRepoActions ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
+                    >
+                      🗂️ Repository Actions
+                    </button>
+                    <button
+                      onClick={() => setShowOpenSource(!showOpenSource)}
+                      className={`text-[10px] ${showOpenSource ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
+                    >
+                      🌟 Open Source Contributor
+                    </button>
+                    <button
+                      onClick={() => setShowSocialMedia(!showSocialMedia)}
+                      className={`text-[10px] ${showSocialMedia ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
+                    >
+                      🔗 Social Media
+                    </button>
+                    <button
+                      onClick={() => setShowFontSettings(!showFontSettings)}
+                      className={`text-[10px] ${showFontSettings ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
+                    >
+                      🔤 Font Settings
+                    </button>
                     <button
                       onClick={() => handleSendMessage("Include Docker, Kubernetes, and Cloud Deployments to my tools list")}
                       className="text-[10px] bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 py-1 px-3 rounded-lg text-slate-300 transition text-left"
@@ -1278,15 +1797,274 @@ export default function App() {
                       onClick={() => handleSendMessage("Optimize my summary and titles specifically for a Senior Backend Engineering role")}
                       className="text-[10px] bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 py-1 px-3 rounded-lg text-slate-300 transition text-left"
                     >
-                      ✍️ Target Senior Backend
+                      Target Senior Backend
                     </button>
                     <button
                       onClick={() => handleSendMessage("Highlight my open-source contribution and impact stats inside the CV layout")}
                       className="text-[10px] bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 py-1 px-3 rounded-lg text-slate-300 transition text-left"
                     >
-                      ⭐ Focus Open Source
+                      Focus Open Source
                     </button>
                   </div>
+
+                  {/* Contact Details Section - Collapsible */}
+                  {showContactDetails && (
+                    <div className="mt-3 p-3 bg-slate-950/50 border border-slate-800 rounded-lg space-y-2 animate-fadeIn">
+                      <p className="text-[10px] font-mono text-brand-cyan uppercase tracking-wider">Edit Contact Information</p>
+                      {([
+                        { field: 'name' as const, label: 'Name', placeholder: 'Your full name' },
+                        { field: 'location' as const, label: 'Location', placeholder: 'e.g. Seattle, WA' },
+                        { field: 'email' as const, label: 'Email', placeholder: 'you@email.com' },
+                        { field: 'age' as const, label: 'Age', placeholder: 'e.g. 22' },
+                        { field: 'languages' as const, label: 'Languages', placeholder: 'English, Mandarin' },
+                      ]).map(({ field, placeholder }) => (
+                        <div key={field} className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                            {field.charAt(0).toUpperCase() + field.slice(1)}
+                          </label>
+                          <input
+                            type="text"
+                            value={contactDraft[field]}
+                            onChange={(e) => setContactDraft((d) => ({ ...d, [field]: e.target.value }))}
+                            placeholder={placeholder}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-brand-purple"
+                          />
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => {
+                          // Build a natural language message from the contact fields
+                          const updates: string[] = [];
+                          if (contactDraft.name && contactDraft.name !== resume?.name) {
+                            updates.push(`name to "${contactDraft.name}"`);
+                          }
+                          if (contactDraft.location && contactDraft.location !== resume?.contact?.location) {
+                            updates.push(`location to "${contactDraft.location}"`);
+                          }
+                          if (contactDraft.email && contactDraft.email !== resume?.contact?.email) {
+                            updates.push(`email to "${contactDraft.email}"`);
+                          }
+                          if (contactDraft.age && contactDraft.age !== resume?.contact?.age) {
+                            updates.push(`age to "${contactDraft.age}"`);
+                          }
+                          const currentLanguages = resume?.contact?.languages?.join(', ') || '';
+                          if (contactDraft.languages && contactDraft.languages !== currentLanguages) {
+                            updates.push(`spoken languages to "${contactDraft.languages}"`);
+                          }
+                          
+                          if (updates.length === 0) {
+                            handleSendMessage('Update my contact information with the details I provided');
+                          } else {
+                            handleSendMessage(`Update my ${updates.join(', ')}`);
+                          }
+                        }}
+                        disabled={isChatLoading}
+                        className="w-full mt-2 bg-brand-purple/20 hover:bg-brand-purple/40 border border-brand-purple/40 text-violet-200 font-semibold text-[11px] py-2 px-4 rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {isChatLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Apply Contact Changes</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Repository Actions Section - Collapsible */}
+                  {showRepoActions && (
+                    <div className="mt-3 p-3 bg-slate-950/50 border border-slate-800 rounded-lg space-y-2 animate-fadeIn">
+                      <p className="text-[10px] font-mono text-brand-cyan uppercase tracking-wider">Repository Management</p>
+                      
+                      {/* Repository List with Toggle */}
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                        {allUserRepos.map((repo) => (
+                          <div key={repo.id} className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5">
+                            <span className={`text-[10px] font-mono ${repo.inResume ? 'text-emerald-400' : 'text-slate-400'}`}>
+                              {repo.inResume && '✓ '}{repo.name}
+                            </span>
+                            <button
+                              onClick={() => handleRepoToggle(repo.name, !repo.inResume)}
+                              className={`text-[9px] px-2 py-0.5 rounded ${
+                                repo.inResume 
+                                  ? 'bg-red-900/30 border border-red-800 text-red-300 hover:bg-red-900/50' 
+                                  : 'bg-emerald-900/30 border border-emerald-800 text-emerald-300 hover:bg-emerald-900/50'
+                              } transition`}
+                            >
+                              {repo.inResume ? 'Remove' : 'Add'}
+                            </button>
+                          </div>
+                        ))}
+                        {allUserRepos.length === 0 && (
+                          <p className="text-[10px] text-slate-500 italic">Loading repositories...</p>
+                        )}
+                      </div>
+
+                      {/* Enhance existing project */}
+                      <div className="pt-2 border-t border-slate-800 space-y-1.5">
+                        <p className="text-[9px] font-mono text-slate-500 uppercase">Enhance Existing Project</p>
+                        <select
+                          value={selectedRepoId}
+                          onChange={(e) => setSelectedRepoId(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 focus:outline-none focus:border-brand-purple"
+                        >
+                          {resume?.projects?.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={repoAction}
+                            onChange={(e) => setRepoAction(e.target.value as 'description' | 'tech-stack')}
+                            className="flex-1 bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 focus:outline-none focus:border-brand-purple"
+                          >
+                            <option value="description">Enhance project description</option>
+                            <option value="tech-stack">Update project tech stack</option>
+                          </select>
+                          <button
+                            onClick={handleRepoEnhancement}
+                            disabled={isChatLoading || !selectedRepoId}
+                            className="shrink-0 text-[10px] bg-brand-purple/20 hover:bg-brand-purple/40 border border-brand-purple/40 text-violet-200 px-3 rounded-lg transition disabled:opacity-50"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Social Media Section - Collapsible */}
+                  {showSocialMedia && (
+                    <div className="mt-3 p-3 bg-slate-950/50 border border-slate-800 rounded-lg space-y-2 animate-fadeIn">
+                      <p className="text-[10px] font-mono text-brand-cyan uppercase tracking-wider">Social Media Links</p>
+                      {([
+                        { field: 'linkedin' as const, label: 'LinkedIn', placeholder: 'linkedin.com/in/yourprofile' },
+                        { field: 'twitter' as const, label: 'Twitter/X', placeholder: 'twitter.com/yourhandle' },
+                        { field: 'instagram' as const, label: 'Instagram', placeholder: 'instagram.com/yourhandle' },
+                        { field: 'facebook' as const, label: 'Facebook', placeholder: 'facebook.com/yourprofile' },
+                      ]).map(({ field, label, placeholder }) => (
+                        <div key={field} className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                            {label}
+                          </label>
+                          <input
+                            type="text"
+                            value={socialMediaDraft[field]}
+                            onChange={(e) => setSocialMediaDraft((d) => ({ ...d, [field]: e.target.value }))}
+                            placeholder={placeholder}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-brand-purple"
+                          />
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => {
+                          const updates: string[] = [];
+                          if (socialMediaDraft.linkedin && socialMediaDraft.linkedin !== resume?.contact?.linkedin) {
+                            updates.push(`LinkedIn to "${socialMediaDraft.linkedin}"`);
+                          }
+                          if (socialMediaDraft.twitter && socialMediaDraft.twitter !== resume?.contact?.twitter) {
+                            updates.push(`Twitter to "${socialMediaDraft.twitter}"`);
+                          }
+                          if (socialMediaDraft.instagram && socialMediaDraft.instagram !== resume?.contact?.instagram) {
+                            updates.push(`Instagram to "${socialMediaDraft.instagram}"`);
+                          }
+                          if (socialMediaDraft.facebook && socialMediaDraft.facebook !== resume?.contact?.facebook) {
+                            updates.push(`Facebook to "${socialMediaDraft.facebook}"`);
+                          }
+                          
+                          if (updates.length === 0) {
+                            handleSendMessage('Update my social media links with the provided information');
+                          } else {
+                            handleSendMessage(`Update my social media: ${updates.join(', ')}`);
+                          }
+                        }}
+                        disabled={isChatLoading}
+                        className="w-full mt-2 bg-brand-purple/20 hover:bg-brand-purple/40 border border-brand-purple/40 text-violet-200 font-semibold text-[11px] py-2 px-4 rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {isChatLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Apply Social Media Links</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Font Settings Section - Collapsible */}
+                  {showFontSettings && (
+                    <div className="mt-3 p-3 bg-slate-950/50 border border-slate-800 rounded-lg space-y-2 animate-fadeIn">
+                      <p className="text-[10px] font-mono text-brand-cyan uppercase tracking-wider">Resume Font Settings</p>
+                      
+                      <div className="space-y-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                            Font Size
+                          </label>
+                          <select
+                            value={resume?.fontSize || '11pt'}
+                            onChange={(e) => {
+                              const newSize = e.target.value as '10pt' | '11pt' | '12pt';
+                              const updatedResume = {
+                                ...resume!,
+                                fontSize: newSize,
+                                lastUpdated: Date.now(),
+                              };
+                              setResume(updatedResume);
+                              persistResume(updatedResume);
+                            }}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 focus:outline-none focus:border-brand-purple"
+                          >
+                            <option value="10pt">10pt (Compact)</option>
+                            <option value="11pt">11pt (Standard)</option>
+                            <option value="12pt">12pt (Large)</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                            Font Family
+                          </label>
+                          <select
+                            value={resume?.fontFamily || 'Georgia'}
+                            onChange={(e) => {
+                              const newFont = e.target.value as 'Georgia' | 'Times New Roman' | 'Arial' | 'Helvetica' | 'Calibri';
+                              const updatedResume = {
+                                ...resume!,
+                                fontFamily: newFont,
+                                lastUpdated: Date.now(),
+                              };
+                              setResume(updatedResume);
+                              persistResume(updatedResume);
+                            }}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 focus:outline-none focus:border-brand-purple"
+                          >
+                            <option value="Georgia">Georgia (Classic Serif)</option>
+                            <option value="Times New Roman">Times New Roman (Traditional)</option>
+                            <option value="Arial">Arial (Modern Sans-serif)</option>
+                            <option value="Helvetica">Helvetica (Clean Sans-serif)</option>
+                            <option value="Calibri">Calibri (Professional Sans-serif)</option>
+                          </select>
+                        </div>
+
+                        <div className="mt-2 bg-slate-900 border border-slate-800 rounded-lg p-2">
+                          <p className="text-[9px] text-slate-400 leading-relaxed">
+                            Current: <span className="text-brand-cyan font-semibold">{resume?.fontFamily || 'Georgia'}</span> at <span className="text-brand-cyan font-semibold">{resume?.fontSize || '11pt'}</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Input form */}
@@ -1426,21 +2204,45 @@ export default function App() {
 
 
             {/* RIGHT COLUMN: LIVING RESUME VIEW (7 cols) */}
-            <div className="lg:col-span-7 flex flex-col bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative">
+            <div className="lg:col-span-7 flex flex-col bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative print:border-0 print:shadow-none print:bg-white print:overflow-visible">
               
               {/* Doc header bar */}
-              <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5 bg-slate-900/90 relative z-10">
+              <div className="no-print flex items-center justify-between border-b border-slate-800 px-5 py-3.5 bg-slate-900/90 relative z-10">
                 <div className="flex items-center gap-2">
                   <FileText className="w-4 h-4 text-brand-purple" />
                   <span className="font-display font-bold text-xs text-white uppercase tracking-wider">Living CV Portfolio</span>
                   <div className="h-4 w-[1px] bg-slate-800" />
                   <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
                     <Clock className="w-3 h-3 text-brand-cyan" />
-                    Last Updated: {resume.lastUpdated || "Just now"}
+                    Last Updated: {typeof resume.lastUpdated === 'number' ? getRelativeTime(resume.lastUpdated) : resume.lastUpdated || 'Just now'}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-2">
+                  {/* Share Link Button */}
+                  <button
+                    onClick={() => {
+                      const shareUrl = `${window.location.origin}/${githubUsername || resume?.name || ''}`;
+                      navigator.clipboard.writeText(shareUrl);
+                      setClipboardCopied(true);
+                      setTimeout(() => setClipboardCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-1.5 bg-brand-cyan/10 hover:bg-brand-cyan/20 border border-brand-cyan/30 text-brand-cyan text-[11px] font-semibold py-1.5 px-3 rounded-lg transition"
+                  >
+                    {clipboardCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Clipboard className="w-3.5 h-3.5" />
+                        <span>Share Link</span>
+                      </>
+                    )}
+                  </button>
+
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
                   <button
                     onClick={() => setActiveTab('preview')}
                     className={`text-[11px] font-mono font-semibold py-1 px-2.5 rounded ${
@@ -1463,9 +2265,40 @@ export default function App() {
                   </button>
                 </div>
               </div>
+              </div>
+
+              {/* Resume Format Selector */}
+              <div className="no-print px-5 py-4 bg-slate-900/60 border-b border-slate-800 relative z-10">
+                <div className="flex items-center gap-2 mb-3">
+                  <LayoutTemplate className="w-4 h-4 text-brand-cyan" />
+                  <span className="text-xs font-display font-bold text-white uppercase tracking-wider">
+                    Resume Format
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono mb-3">
+                  {getResumeFormatOption(selectedFormat).description}
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {RESUME_FORMAT_OPTIONS.map((format) => (
+                    <button
+                      key={format.id}
+                      onClick={() => handleFormatChange(format.id)}
+                      className={`shrink-0 text-left rounded-xl border px-3 py-2.5 transition min-w-[140px] max-w-[180px] cursor-pointer ${
+                        selectedFormat === format.id
+                          ? 'border-brand-cyan bg-brand-cyan/10 shadow-lg shadow-brand-cyan/10'
+                          : 'border-slate-700 bg-slate-950/50 hover:border-slate-600 hover:bg-slate-900'
+                      }`}
+                    >
+                      <p className="text-[11px] font-display font-bold text-white leading-tight">
+                        {format.name}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Actions strip */}
-              <div className="px-5 py-2.5 bg-slate-800/30 border-b border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+              <div className="no-print px-5 py-2.5 bg-slate-800/30 border-b border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
                 <span>⚡ Powered by live analyzed GitHub profile information</span>
                 <div className="flex items-center gap-2">
                   <button
@@ -1496,236 +2329,24 @@ export default function App() {
               </div>
 
 
-              {/* Resume Sheet Body */}
-              <div className="flex-1 p-6 md:p-8 overflow-y-auto max-h-[720px] bg-white text-slate-900 print:bg-white print:text-black print:p-0">
+              {/* Resume Sheet Body — only this section is exported to PDF */}
+              <div
+                id="resume-print-area"
+                className="resume-print-area flex-1 p-6 md:p-8 overflow-y-auto max-h-[720px] bg-white text-slate-900"
+              >
                 
                 {activeTab === 'json' ? (
                   <pre className="font-mono text-xs bg-slate-950 text-slate-300 p-4 rounded-xl border border-slate-800 overflow-x-auto text-left selection:bg-brand-purple/40">
                     {JSON.stringify(resume, null, 2)}
                   </pre>
                 ) : (
-                  <div className="space-y-6 md:space-y-8 select-text">
-                    
-                    {/* Header Info */}
-                    <div className="border-b-2 border-slate-200 pb-5 text-left">
-                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                        <div>
-                          <h2 className="font-display font-bold text-2xl md:text-3xl text-slate-950 leading-none mb-1">
-                            {resume.name}
-                          </h2>
-                          <p className="font-mono text-xs md:text-sm text-violet-700 font-bold tracking-wide uppercase">
-                            {resume.title}
-                          </p>
-                          <p className="text-xs text-slate-500 italic mt-1 bg-slate-100 py-1 border border-slate-200 px-2.5 rounded-md inline-block">
-                            "{resume.slogan}"
-                          </p>
-                        </div>
-                        
-                        <div className="text-left md:text-right font-mono text-[10px] md:text-xs text-slate-600 space-y-0.5">
-                          <div>📍 San Francisco, CA / Hybrid</div>
-                          <div>✉️ developer@commitcv.link</div>
-                          <div className="text-brand-purple font-semibold">★ Fully Analyzed Profile</div>
-                        </div>
-                      </div>
-
-                      {/* Summary */}
-                      <div className="mt-4">
-                        <p className="text-xs md:text-sm text-slate-700 leading-relaxed font-sans">
-                          {resume.summary}
-                        </p>
-                      </div>
-                    </div>
-
-
-                    {/* GitHub Statistics ticks */}
-                    <div>
-                      <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-slate-500 mb-3 text-left">
-                        GitHub Engagement Statistics & Scope
-                      </h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-left">
-                          <span className="text-[10px] font-mono text-slate-500 block uppercase">Repositories</span>
-                          <span className="text-xl font-bold text-slate-900 font-display flex items-center gap-1.5 mt-0.5">
-                            <Code className="w-4 h-4 text-slate-400" />
-                            {resume.statistics.repositoriesCount}
-                          </span>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-left">
-                          <span className="text-[10px] font-mono text-slate-500 block uppercase">Total Commits</span>
-                          <span className="text-xl font-bold text-slate-900 font-display flex items-center gap-1.5 mt-0.5">
-                            <GitCommit className="w-4 h-4 text-rose-500 animate-pulse" />
-                            {resume.statistics.commitsCount}
-                          </span>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-left">
-                          <span className="text-[10px] font-mono text-slate-500 block uppercase">Pull Requests</span>
-                          <span className="text-xl font-bold text-slate-900 font-display flex items-center gap-1.5 mt-0.5">
-                            <GitPullRequest className="w-4 h-4 text-blue-500" />
-                            {resume.statistics.pullRequestsCount}
-                          </span>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-left">
-                          <span className="text-[10px] font-mono text-slate-500 block uppercase">Issues Solved</span>
-                          <span className="text-xl font-bold text-slate-900 font-display flex items-center gap-1.5 mt-0.5">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                            {resume.statistics.issuesCount}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-
-                    {/* Technical Matrix */}
-                    <div className="text-left">
-                      <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-slate-500 mb-3.5 pb-1 border-b border-slate-200">
-                        Technical Skills
-                      </h3>
-
-                      <div className="space-y-2.5">
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-1 pb-1">
-                          <span className="md:col-span-3 text-[11px] font-mono uppercase text-slate-500 pt-1">Languages</span>
-                          <div className="md:col-span-9 flex flex-wrap gap-1.5">
-                            {resume.skills.languages?.map((lang, i) => (
-                              <span
-                                key={i}
-                                className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
-                                  newlyAddedSkills.includes(lang)
-                                    ? 'bg-brand-purple/15 text-violet-700 border-brand-purple animate-skill-glow font-bold'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {lang}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-1 pb-1">
-                          <span className="md:col-span-3 text-[11px] font-mono uppercase text-slate-500 pt-1">Frameworks</span>
-                          <div className="md:col-span-9 flex flex-wrap gap-1.5">
-                            {resume.skills.frameworks?.map((frm, i) => (
-                              <span
-                                key={i}
-                                className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
-                                  newlyAddedSkills.includes(frm)
-                                    ? 'bg-brand-purple/15 text-violet-700 border-brand-purple animate-skill-glow font-bold'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {frm}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-1 pb-1">
-                          <span className="md:col-span-3 text-[11px] font-mono uppercase text-slate-500 pt-1">Databases</span>
-                          <div className="md:col-span-9 flex flex-wrap gap-1.5">
-                            {resume.skills.databases?.map((db, i) => (
-                              <span
-                                key={i}
-                                className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
-                                  newlyAddedSkills.includes(db)
-                                    ? 'bg-brand-purple/15 text-violet-700 border-brand-purple animate-skill-glow font-bold'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {db}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-1 pb-1">
-                          <span className="md:col-span-3 text-[11px] font-mono uppercase text-slate-500 pt-1">Tools & DevOps</span>
-                          <div className="md:col-span-9 flex flex-wrap gap-1.5">
-                            {resume.skills.tools?.map((tool, i) => (
-                              <span
-                                key={i}
-                                className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
-                                  newlyAddedSkills.includes(tool)
-                                    ? 'bg-brand-purple/15 text-violet-700 border-brand-purple animate-skill-glow font-bold'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {tool}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-
-                    {/* Highlighted Projects */}
-                    <div className="text-left">
-                      <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-slate-500 mb-4 pb-1 border-b border-slate-200">
-                        Highlighted Projects
-                      </h3>
-
-                      <div className="space-y-6">
-                        {resume.projects?.map((project) => (
-                           <div key={project.id} className="relative group pl-3.5 border-l-2 border-slate-200 hover:border-slate-400 transition pb-1">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
-                                <h4 className="font-display font-semibold text-sm md:text-base text-slate-900 leading-tight">
-                                  {project.name}
-                                </h4>
-                                <span className="text-[11px] font-mono text-slate-500 uppercase">
-                                  {project.role}
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap gap-1 justify-end max-w-[50%]">
-                                {project.techStack?.map((s, i) => (
-                                  <span key={i} className="text-[9px] font-mono bg-slate-100 text-slate-600 border border-slate-200/60 px-1.5 py-0.5 rounded-md">
-                                    {s}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-
-                            <ul className="mt-2.5 space-y-1.5 text-xs text-slate-600 list-disc list-inside leading-relaxed">
-                              {project.description?.map((bullet, index) => (
-                                <li key={index} className="pl-1 text-slate-700">
-                                  {bullet}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-
-                    {/* Open Source Engagement */}
-                    {resume.openSourceContributions && resume.openSourceContributions.length > 0 && (
-                      <div className="text-left">
-                        <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-slate-500 mb-3 pb-1 border-b border-slate-200">
-                          Open Source Engagement
-                        </h3>
-                        <p className="text-xs text-slate-600 italic mb-3.5">
-                          {resume.openSourceSummary}
-                        </p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {resume.openSourceContributions.map((contrib, i) => (
-                            <div key={i} className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5">
-                              <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1.5 mb-2">
-                                <span className="font-mono text-xs text-slate-900 font-bold">{contrib.project}</span>
-                                <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-1.5 py-0.2">
-                                  {contrib.prCount} PRs merged
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-slate-600 leading-normal pl-0.5">
-                                <strong>Role: {contrib.role}</strong> — {contrib.highlight}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
+                  <ResumePreview
+                    resume={resume}
+                    formatId={selectedFormat}
+                    username={githubUsername}
+                    newlyAddedSkills={newlyAddedSkills}
+                    showOpenSource={showOpenSource}
+                  />
                 )}
 
               </div>
@@ -1741,7 +2362,7 @@ export default function App() {
       </main>
 
       {/* Styled clean footer */}
-      <footer className="border-t border-slate-800 bg-slate-1000 relative z-10 py-5 text-center mt-auto px-4">
+      <footer className="no-print border-t border-slate-800 bg-slate-1000 relative z-10 py-5 text-center mt-auto px-4">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500 font-mono">
           <span>
             CommitCV
@@ -1852,17 +2473,17 @@ export default function App() {
                     type="text"
                     value={githubUsername}
                     onChange={(e) => setGithubUsername(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && githubUsername.trim() && (
-                      triggerAnalysis(null, githubUsername),
-                      setShowTryItOutModal(false)
-                    )}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter' && githubUsername.trim()) {
+                        await triggerAnalysis(null, githubUsername);
+                      }
+                    }}
                     placeholder="Enter GitHub username (e.g. gaearon)"
                     className="w-full bg-slate-900 border border-slate-800 hover:border-slate-700 p-3 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-cyan transition"
                   />
                   <button
-                    onClick={() => {
-                      triggerAnalysis(null, githubUsername);
-                      setShowTryItOutModal(false);
+                    onClick={async () => {
+                      await triggerAnalysis(null, githubUsername);
                     }}
                     disabled={loading || !githubUsername.trim()}
                     className="w-full bg-brand-cyan hover:bg-cyan-500 text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
@@ -1895,9 +2516,8 @@ export default function App() {
                 
                 <div className="space-y-3">
                   <button
-                    onClick={() => {
-                      handleGithubConnect();
-                      setShowTryItOutModal(false);
+                    onClick={async () => {
+                      await handleGithubConnect();
                     }}
                     disabled={loading}
                     className="w-full bg-slate-100 hover:bg-white text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
@@ -1911,53 +2531,132 @@ export default function App() {
                       </>
                     )}
                   </button>
-
-                  <button
-                    onClick={() => setShowSetupGuide(!showSetupGuide)}
-                    className="w-full bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-350 font-mono text-[10px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <span>{showSetupGuide ? '隐藏' : '显示'} GitHub App 配置指南</span>
-                  </button>
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
 
-            {showSetupGuide && (
-              <div className="mt-6 p-6 bg-slate-950 border border-slate-850 rounded-xl text-left text-xs text-slate-300 w-full animate-fadeIn space-y-4">
-                <h4 className="font-display font-bold text-slate-200 text-xs font-mono uppercase tracking-wider">🛠️ Developer Credentials Settings</h4>
-                <p className="text-[11px] text-slate-450 text-slate-450 leading-relaxed font-sans">
-                  Go to GitHub <strong>Developer settings</strong> (OAuth App or GitHub App), and configure these required integration properties:
+      {/* Webhook Setup Modal */}
+      {showWebhookModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" 
+            onClick={() => setShowWebhookModal(false)}
+          />
+          
+          {/* Modal Container */}
+          <div className="relative bg-gradient-to-br from-slate-900 to-slate-950 border border-purple-500/30 rounded-3xl p-8 max-w-2xl w-full shadow-2xl z-10 animate-scaleIn">
+            
+            {/* Close Button */}
+            <button 
+              onClick={() => setShowWebhookModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 w-8 h-8 flex items-center justify-center rounded-full cursor-pointer border-none text-sm font-bold"
+            >
+              ✕
+            </button>
+
+            {/* Header with Icon */}
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-purple-600 to-cyan-600 mb-4">
+                <Sparkles className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="font-display font-bold text-3xl text-white mb-3 bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
+                启用实时简历更新
+              </h3>
+              <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
+                自动为你的所有 GitHub 仓库配置 Webhooks。每次你 push 代码，AI 会自动分析 commit 并更新你的简历！
+              </p>
+            </div>
+
+            {/* Features Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+              <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 text-center">
+                <GitCommit className="w-6 h-6 text-purple-400 mx-auto mb-2" />
+                <h4 className="text-xs font-semibold text-white mb-1">自动分析</h4>
+                <p className="text-[10px] text-slate-400">AI 分析每个 commit message</p>
+              </div>
+              <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 text-center">
+                <RefreshCw className="w-6 h-6 text-cyan-400 mx-auto mb-2" />
+                <h4 className="text-xs font-semibold text-white mb-1">实时更新</h4>
+                <p className="text-[10px] text-slate-400">push 后立即更新简历</p>
+              </div>
+              <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 text-center">
+                <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-2" />
+                <h4 className="text-xs font-semibold text-white mb-1">自动配置</h4>
+                <p className="text-[10px] text-slate-400">一键配置所有仓库</p>
+              </div>
+            </div>
+
+            {/* Current Status (if webhook already partially enabled) */}
+            {webhookStatus && webhookStatus.reposWithWebhook > 0 && (
+              <div className="mb-6 p-4 bg-emerald-950/20 border border-emerald-800/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span className="text-sm font-semibold text-emerald-400">部分仓库已启用</span>
+                </div>
+                <p className="text-xs text-emerald-300/70">
+                  当前 {webhookStatus.reposWithWebhook} / {webhookStatus.totalRepos} 个仓库已配置 Webhook ({webhookStatus.coverage}%)
                 </p>
-
-                {/* Homepage URL */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-[10px] font-mono text-slate-500 uppercase tracking-wide">
-                    <span>Homepage URL</span>
-                  </div>
-                  <div className="flex gap-1.5 items-center">
-                    <div className="flex-1 bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-[10px] font-mono text-slate-300 truncate">
-                      {window.location.origin}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Authorization Callback URL */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-[10px] font-mono text-slate-500 uppercase tracking-wide">
-                    <span>User authorization callback URL</span>
-                  </div>
-                  <div className="flex gap-1.5 items-center">
-                    <div className="flex-1 bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-[10px] font-mono text-slate-300 truncate font-mono">
-                      {window.location.origin}/api/auth/github/callback
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 p-3 rounded border border-slate-850 text-[10px] text-slate-400 space-y-1 font-sans">
-                  <p>💡 <strong>Credentials Secret Settings</strong>: Update your applet's Secrets with <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code> to authorize live tokens.</p>
-                </div>
               </div>
             )}
+
+            {/* How it Works */}
+            <div className="mb-8 p-5 bg-slate-950/50 border border-slate-800 rounded-xl">
+              <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <span className="text-purple-400">⚡</span> 工作原理
+              </h4>
+              <ol className="space-y-2 text-xs text-slate-300">
+                <li className="flex gap-2">
+                  <span className="text-purple-400 font-bold">1.</span>
+                  <span>我们将为你的每个仓库自动创建一个 GitHub Webhook</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-cyan-400 font-bold">2.</span>
+                  <span>每次你 push 代码时，GitHub 会通知我们的 AI 服务器</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-emerald-400 font-bold">3.</span>
+                  <span>AI 分析你的 commit，提取新技能并自动更新简历</span>
+                </li>
+              </ol>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowWebhookModal(false)}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-3 px-6 rounded-xl transition text-sm"
+              >
+                稍后再说
+              </button>
+              <button
+                onClick={setupWebhooks}
+                disabled={settingUpWebhook}
+                className="flex-1 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white font-bold py-3 px-6 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {settingUpWebhook ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    配置中...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    立即启用
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Security Note */}
+            <div className="mt-6 p-3 bg-slate-900/50 border border-slate-800/50 rounded-lg">
+              <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+                🔒 <strong>安全说明</strong>: Webhooks 只会接收 push 事件通知，不会访问你的代码内容。你可以随时在 GitHub 仓库设置中禁用。
+              </p>
+            </div>
           </div>
         </div>
       )}

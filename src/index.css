@@ -166,3 +166,130 @@
   animation: scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+/* Professional resume typography */
+.resume-document {
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 11pt;
+  line-height: 1.45;
+  color: #1a1a1a;
+}
+
+.resume-name {
+  font-family: "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif;
+  font-size: 20pt;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #111827;
+  line-height: 1.15;
+}
+
+.resume-title {
+  font-family: "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif;
+  font-size: 12pt;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 0.15rem;
+}
+
+.resume-section-title {
+  font-family: "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif;
+  font-size: 10pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #374151;
+  border-bottom: 1px solid #9ca3af;
+  padding-bottom: 0.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.resume-body-text {
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 11pt;
+}
+
+.resume-project-title {
+  font-family: "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif;
+  font-size: 11.5pt;
+  font-weight: 600;
+  color: #111827;
+}
+
+.resume-skill-new {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: #7c3aed;
+}
+
+.resume-contact-inline a {
+  color: inherit;
+}
+
+/* Print / PDF export — resume content only */
+@media print {
+  @page {
+    margin: 0.5in;
+    size: letter;
+  }
+
+  /* Hide page headers and footers (like localhost URL) */
+  @page {
+    margin-top: 0.5in;
+    margin-bottom: 0.5in;
+  }
+
+  body {
+    background: white !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #resume-print-area,
+  #resume-print-area * {
+    visibility: visible;
+  }
+
+  #resume-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  .animate-pulse,
+  .animate-skill-glow {
+    animation: none !important;
+  }
+}
+
