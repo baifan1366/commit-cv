@@ -222,7 +222,22 @@ export default function UsernamePage() {
         <div className="bg-slate-900/80 backdrop-blur-sm border border-red-900/50 rounded-xl p-8 max-w-md text-center relative z-10 shadow-2xl">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4 animate-pulse" />
           <h2 className="text-xl font-display font-bold text-white mb-2">Failed to Load Resume</h2>
-          <p className="text-slate-400 mb-4 font-mono text-sm">{error}</p>
+          
+          {/* Check if error message indicates timeout or rate limit */}
+          {error.includes('timeout') || error.includes('timed out') || error.includes('rate limit') || error.includes('free model') ? (
+            <>
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-4">
+                <p className="text-amber-300 font-mono text-sm mb-2">⏱️ Request Timeout</p>
+                <p className="text-slate-300 text-xs leading-relaxed">
+                  Due to free model limits, the analysis timed out. This is temporary - please try again in a moment.
+                </p>
+              </div>
+              <p className="text-slate-400 font-mono text-xs mb-4">{error}</p>
+            </>
+          ) : (
+            <p className="text-slate-400 mb-4 font-mono text-sm">{error}</p>
+          )}
+          
           <div className="flex gap-3 justify-center">
             <button
               onClick={handleRetry}

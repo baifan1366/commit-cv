@@ -337,6 +337,39 @@ app.get(['/api/auth/github/callback', '/api/auth/github/callback/'], async (req,
 });
 
 
+// Helper to fetch commits directly from repositories
+async function fetchRepositoryCommits(
+  owner: string, 
+  repoName: string, 
+  headers: Record<string, string>,
+  maxCommits: number = 30
+): Promise<any[]> {
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.github.com/repos/${owner}/${repoName}/commits?per_page=${maxCommits}`,
+      { headers },
+      GITHUB_TIMEOUT_MS
+    );
+    
+    if (!response.ok) {
+      console.log(`[DEBUG] Failed to fetch commits for ${owner}/${repoName}: ${response.status}`);
+      return [];
+    }
+    
+    const commits = await response.json();
+    return Array.isArray(commits) ? commits.map((c: any) => ({
+      sha: c.sha ? c.sha.substring(0, 8) : 'unknown',
+      message: c.commit?.message || 'No message',
+      date: c.commit?.author?.date || c.commit?.committer?.date || new Date().toISOString(),
+      repository: repoName,
+      author: c.author?.login || c.commit?.author?.name || owner
+    })) : [];
+  } catch (error: any) {
+    console.log(`[DEBUG] Error fetching commits for ${owner}/${repoName}: ${error.message}`);
+    return [];
+  }
+}
+
 // Helper to process commit activities out of GitHub events lists:
 function parseEvents(eventsData: any, activity: any) {
   if (Array.isArray(eventsData)) {
@@ -853,7 +886,25 @@ app.post('/api/github/analyze', async (req, res) => {
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
       console.log(`[DEBUG] Fetched ${Array.isArray(eventsData) ? eventsData.length : 0} events`);
       parseEvents(eventsData, activity);
-      console.log(`[DEBUG] Parsed commits: ${activity.commits.length}, PRs: ${activity.pullRequests.length}, Issues: ${activity.issues.length}`);
+      console.log(`[DEBUG] Parsed commits from events: ${activity.commits.length}, PRs: ${activity.pullRequests.length}, Issues: ${activity.issues.length}`);
+      
+      // Fetch commits directly from repositories if events didn't provide enough
+      if (activity.commits.length < 10 && activity.repositories.length > 0) {
+        console.log(`[DEBUG] Fetching commits directly from repositories...`);
+        const commitPromises = activity.repositories.slice(0, 5).map((repo: any) => 
+          fetchRepositoryCommits(loginName, repo.name, headers, 20)
+        );
+        const repoCommits = await Promise.all(commitPromises);
+        const allCommits = repoCommits.flat();
+        
+        // Merge with existing commits and remove duplicates
+        const existingShas = new Set(activity.commits.map((c: any) => c.sha));
+        const newCommits = allCommits.filter((c: any) => !existingShas.has(c.sha));
+        activity.commits.push(...newCommits);
+        
+        console.log(`[DEBUG] Added ${newCommits.length} commits from repositories. Total commits: ${activity.commits.length}`);
+      }
+      
       console.log(`[analyze] OAuth activity loaded in ${Date.now() - startedAt}ms`);
 
     } else if (inputUsername) {
@@ -964,7 +1015,25 @@ app.post('/api/github/analyze', async (req, res) => {
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
       console.log(`[DEBUG] Fetched ${Array.isArray(eventsData) ? eventsData.length : 0} events`);
       parseEvents(eventsData, activity);
-      console.log(`[DEBUG] Parsed commits: ${activity.commits.length}, PRs: ${activity.pullRequests.length}, Issues: ${activity.issues.length}`);
+      console.log(`[DEBUG] Parsed commits from events: ${activity.commits.length}, PRs: ${activity.pullRequests.length}, Issues: ${activity.issues.length}`);
+      
+      // Fetch commits directly from repositories if events didn't provide enough
+      if (activity.commits.length < 10 && activity.repositories.length > 0) {
+        console.log(`[DEBUG] Fetching commits directly from repositories...`);
+        const commitPromises = activity.repositories.slice(0, 5).map((repo: any) => 
+          fetchRepositoryCommits(cleanedUser, repo.name, headers, 20)
+        );
+        const repoCommits = await Promise.all(commitPromises);
+        const allCommits = repoCommits.flat();
+        
+        // Merge with existing commits and remove duplicates
+        const existingShas = new Set(activity.commits.map((c: any) => c.sha));
+        const newCommits = allCommits.filter((c: any) => !existingShas.has(c.sha));
+        activity.commits.push(...newCommits);
+        
+        console.log(`[DEBUG] Added ${newCommits.length} commits from repositories. Total commits: ${activity.commits.length}`);
+      }
+      
       console.log(`[analyze] Public activity loaded in ${Date.now() - startedAt}ms`);
     }
 
@@ -1160,7 +1229,24 @@ Return EXACTLY a JSON format mapping this strict schema:
 
   } catch (error: any) {
     console.error('Error in /api/github/analyze:', error);
-    res.status(500).json({ error: error.message || 'GitHub communication or parsing error.' });
+    
+    // Provide user-friendly error message for timeout or rate limit issues
+    let userMessage = error.message || 'GitHub communication or parsing error.';
+    
+    // Check if it's a timeout error
+    if (error.message && error.message.includes('timed out')) {
+      userMessage = 'Request timed out due to free model limits. Please retry in a moment.';
+    }
+    // Check if it's a rate limit error
+    else if (error.message && (error.message.includes('rate limit') || error.message.includes('429'))) {
+      userMessage = 'API rate limit reached. Please retry after a few minutes.';
+    }
+    // Check if it's an OpenRouter error
+    else if (error.message && error.message.includes('OpenRouter')) {
+      userMessage = 'AI service temporarily unavailable due to free model limits. Please retry.';
+    }
+    
+    res.status(500).json({ error: userMessage });
   }
 });
 
@@ -1215,7 +1301,17 @@ Process the instructions. Return the updated JSON configuration representing the
 
   } catch (error: any) {
     console.error('Error in chat request:', error);
-    res.status(500).json({ error: error.message || 'Chat translation failed' });
+    
+    // Provide user-friendly error message
+    let userMessage = error.message || 'Chat translation failed';
+    
+    if (error.message && error.message.includes('timed out')) {
+      userMessage = 'Chat request timed out due to free model limits. Please retry.';
+    } else if (error.message && error.message.includes('OpenRouter')) {
+      userMessage = 'AI service temporarily unavailable. Please retry in a moment.';
+    }
+    
+    res.status(500).json({ error: userMessage });
   }
 });
 
@@ -1297,7 +1393,13 @@ Analyze the trajectory using both the resume summary AND the detailed GitHub act
     res.json(insights);
   } catch (error: any) {
     console.error('Error generating coach insights:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate coach insights' });
+    
+    let userMessage = error.message || 'Failed to generate coach insights';
+    if (error.message && error.message.includes('timed out')) {
+      userMessage = 'Coach insights request timed out due to free model limits. Please retry.';
+    }
+    
+    res.status(500).json({ error: userMessage });
   }
 });
 
@@ -1351,7 +1453,13 @@ Respond in character as Alistair 'The Vet' Vance. Use their actual GitHub data t
     res.json({ mentorResponse: outputText.trim() });
   } catch (error: any) {
     console.error('Error in coach chat:', error);
-    res.status(500).json({ error: error.message || 'Mentor communication failed' });
+    
+    let userMessage = error.message || 'Mentor communication failed';
+    if (error.message && error.message.includes('timed out')) {
+      userMessage = 'Mentor chat timed out due to free model limits. Please retry.';
+    }
+    
+    res.status(500).json({ error: userMessage });
   }
 });
 
