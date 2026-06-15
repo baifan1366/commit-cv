@@ -47,6 +47,13 @@ export interface TechSkills {
   tools: string[];
 }
 
+export interface AllTechSkills {
+  languages: string[];
+  frameworks: string[];
+  databases: string[];
+  tools: string[];
+}
+
 export interface ResumeProject {
   id: string;
   name: string;
@@ -84,7 +91,8 @@ export interface CommitCVResume {
   slogan: string;
   summary: string;
   contact?: ResumeContact;
-  skills: TechSkills;
+  skills: TechSkills; // Display skills (3-10 core items per category)
+  allSkills?: AllTechSkills; // Complete analyzed skills (all items for dropdown selection)
   projects: ResumeProject[];
   openSourceSummary: string;
   openSourceContributions: OpenSourceContribution[];

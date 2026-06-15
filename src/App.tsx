@@ -576,6 +576,7 @@ export default function App() {
 
   // Trigger Resume analyzer from server-side using Gemini 3.5 Flash, checking Firestore first (unless forceReload is active)
   const triggerAnalysis = async (token: string | null, username: string | null, forceReload: boolean = false) => {
+    console.log('[triggerAnalysis] Starting analysis:', { token: !!token, username, forceReload });
     setLoading(true);
     setNewlyAddedSkills([]);
     setAnalysisProgress('Initializing...');
@@ -590,22 +591,30 @@ export default function App() {
     
     const targetUsername = username ? username.trim().replace(/@/g, '') : '';
     const cleanUsernameLower = targetUsername.toLowerCase();
+    console.log('[triggerAnalysis] Target username:', targetUsername, 'cleanUsernameLower:', cleanUsernameLower);
 
     // Check Firestore first
     if (firestoreAvailable && !forceReload && cleanUsernameLower) {
       try {
+        console.log('[triggerAnalysis] Checking Firestore cache...');
         setAnalysisProgress('Checking cached data...');
         const docRef = doc(db, 'resumes', cleanUsernameLower);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
+          console.log('[triggerAnalysis] Found cached resume in Firestore');
           const loadedResume = docSnap.data() as CommitCVResume;
+          console.log('[triggerAnalysis] Setting resume state:', loadedResume);
           setResume(loadedResume);
           setGithubUsername(targetUsername);
           setChatHistoryLoaded(false); // Reset to allow loading chat history
+          console.log('[triggerAnalysis] Clearing loading states...');
           setLoading(false);
           setPublicScanLoading(false);
           setAnalysisProgress('');
+          console.log('[triggerAnalysis] Done! Resume should now be visible.');
           return;
+        } else {
+          console.log('[triggerAnalysis] No cached resume found in Firestore');
         }
       } catch (err) {
         console.warn("Failed to retrieve cached profile from Firebase Firestore, pulling from live API:", err);
@@ -616,6 +625,7 @@ export default function App() {
     }
 
     try {
+      console.log('[triggerAnalysis] Fetching from API...');
       setAnalysisProgress('Fetching GitHub profile...');
       
       const response = await fetch('/api/github/analyze', {
@@ -630,8 +640,11 @@ export default function App() {
       setAnalysisProgress('Analyzing repositories...');
       
       const data = await response.json();
+      console.log('[triggerAnalysis] API response:', { ok: response.ok, hasResume: !!data.resume });
+      
       if (response.ok && data.resume) {
         setAnalysisProgress('Generating resume...');
+        console.log('[triggerAnalysis] Setting resume from API:', data.resume);
         setResume(data.resume);
         
         // Persist to Firestore as the master record
@@ -654,16 +667,22 @@ export default function App() {
         setChatHistoryLoaded(false); // Allow chat history to load
         setAnalysisProgress('Complete!');
         
+        console.log('[triggerAnalysis] Analysis complete! Clearing loading states...');
+        
         // Clear progress message after a short delay
-        setTimeout(() => setAnalysisProgress(''), 1000);
+        setTimeout(() => {
+          console.log('[triggerAnalysis] Clearing analysisProgress');
+          setAnalysisProgress('');
+        }, 1000);
       } else {
         throw new Error(data.error || 'Failed to complete resume analysis.');
       }
     } catch (err: any) {
-      console.error(err);
+      console.error('[triggerAnalysis] Error:', err);
       setErrorBanner(err.message || 'Analysis failed. Make sure the username has active repositories, and check if your OpenRouter credentials are fully set up!');
       setAnalysisProgress('');
     } finally {
+      console.log('[triggerAnalysis] Finally block - setting loading to false');
       setLoading(false);
       setPublicScanLoading(false);
     }
@@ -922,7 +941,7 @@ export default function App() {
           {
             id: `webhook-setup-${Date.now()}`,
             sender: 'assistant',
-            text: `🎉 **实时更新已启用！**\n\n✅ 成功配置了 ${data.successCount} 个仓库的 Webhooks\n${data.failureCount > 0 ? `⚠️ ${data.failureCount} 个仓库配置失败\n` : ''}\n现在每次你 push 代码，你的简历都会自动更新！🚀`,
+            text: `🎉 **Live Updates Enabled!**\n\n✅ Successfully configured webhooks for ${data.successCount} repositories\n${data.failureCount > 0 ? `⚠️ ${data.failureCount} repositories failed to configure\n` : ''}\nYour resume will now auto-update every time you push code! 🚀`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           }
         ]);
@@ -933,7 +952,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Failed to setup webhooks:', err);
-      setErrorBanner(`Webhook 配置失败: ${err.message}`);
+      setErrorBanner(`Webhook setup failed: ${err.message}`);
     } finally {
       setSettingUpWebhook(false);
     }
@@ -1242,6 +1261,17 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 md:py-8 relative z-10 flex flex-col justify-center">
         
+        {/* Debug info - remove this later */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="fixed bottom-4 right-4 bg-slate-900 border border-slate-700 p-3 rounded-lg text-xs font-mono z-50 max-w-xs">
+            <div className="text-brand-cyan font-bold mb-1">Debug State:</div>
+            <div className="text-slate-300">resume: {resume ? '✓ exists' : '✗ null'}</div>
+            <div className="text-slate-300">loading: {loading ? 'true' : 'false'}</div>
+            <div className="text-slate-300">analysisProgress: "{analysisProgress}"</div>
+            <div className="text-slate-300">githubUsername: {githubUsername || 'null'}</div>
+          </div>
+        )}
+        
         {errorBanner && (
           <div className="mx-auto w-full max-w-2xl mb-6 bg-slate-900 border border-red-900/50 text-slate-100 p-4 rounded-xl flex items-start gap-3 relative shadow-xl shadow-red-950/25">
             <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5 animate-pulse" />
@@ -1264,7 +1294,6 @@ export default function App() {
 
         {!resume ? (
           <div className="w-full flex flex-col items-center">
-            
             {/* Section 1 - Hero */}
             <section className="scroll-section hero-section flex flex-col justify-center items-center relative min-h-screen text-center py-12 overflow-hidden w-full">
               {/* Contribution Graph background - using stable memoized cells */}
@@ -1850,7 +1879,6 @@ export default function App() {
         ) : (
           /* Step 2, 3, 4: Main Resume workspace */
           <div className="flex flex-col gap-6 flex-1" data-section="portfolio">
-            
             {/* Analysis Progress Indicator */}
             {(loading || analysisProgress) && (
               <div className="bg-slate-900/80 border border-brand-cyan/50 rounded-xl p-4 shadow-lg backdrop-blur-sm">
@@ -1910,7 +1938,7 @@ export default function App() {
                             <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                           </span>
-                          <span className="text-[11px] text-emerald-400 font-semibold">实时更新已启用</span>
+                          <span className="text-[11px] text-emerald-400 font-semibold">Live Updates Enabled</span>
                         </div>
                         {webhookStatus && (
                           <span className="text-[10px] text-emerald-300/70 font-mono">
@@ -1924,7 +1952,7 @@ export default function App() {
                         className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-105"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>启用实时更新</span>
+                        <span>Enable Live Updates</span>
                       </button>
                     )}
                   </div>
@@ -1946,7 +1974,7 @@ export default function App() {
             <div className="no-print lg:col-span-5 flex flex-col">
               
               {/* Resume Chat Copilot - Pristine layout taking full height */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex-1 flex flex-col relative overflow-hidden min-h-[450px]">
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex-1 flex flex-col relative overflow-hidden min-h-[700px]">
                 
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
                   <div className="flex items-center gap-2">
@@ -1977,7 +2005,7 @@ export default function App() {
                 </div>
 
                 {/* Messages Panel */}
-                <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[380px] mb-4 text-left">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[600px] mb-4 text-left">
                   {messages.map((m) => (
                     <div
                       key={m.id}
@@ -2333,119 +2361,6 @@ export default function App() {
                     className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 text-white rounded-xl p-2.5 transition shrink-0"
                   >
                     <Send className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* GitHub Webhook Push Simulator - Elite Developer Panel */}
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 mt-4 flex flex-col relative text-left">
-                <div className="flex items-center gap-2 mb-3 border-b border-slate-800 pb-2.5">
-                  <Terminal className="w-4 h-4 text-emerald-400" />
-                  <div>
-                    <h3 className="font-display font-bold text-xs uppercase text-slate-100 tracking-wider">GitHub App Webhook Simulator</h3>
-                    <p className="text-[10px] text-slate-400">Simulate or configure real Git push triggers</p>
-                  </div>
-                </div>
-
-                <div className="mb-4 space-y-2">
-                  <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
-                    <strong>Auto Update on Push</strong>: Each time you perform a <code>git push</code>, our integration parses new technologies and upgrades your resume in real-time.
-                  </p>
-                  
-                  {/* Real Webhook Config Tip */}
-                  <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[10px] font-mono select-all relative group flex items-center justify-between gap-1.5 gap-y-1">
-                    <div className="overflow-x-auto truncate mr-1">
-                      <span className="text-slate-500">HOOK:</span> {window.location.origin}/api/webhook/github?username={githubUsername || resume?.name || 'demo'}
-                    </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(`${window.location.origin}/api/webhook/github?username=${githubUsername || resume?.name || 'demo'}`);
-                        setCopiedWebhookUrl(true);
-                        setTimeout(() => setCopiedWebhookUrl(false), 2000);
-                      }}
-                      className="text-slate-400 hover:text-white bg-slate-850 hover:bg-slate-700 font-sans transition py-1 px-2 rounded shrink-0 cursor-pointer"
-                    >
-                      {copiedWebhookUrl ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Git Push Simulator Form */}
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">Commit Message Payload</label>
-                    <input
-                      type="text"
-                      value={customCommitMessage}
-                      onChange={(e) => setCustomCommitMessage(e.target.value)}
-                      placeholder="e.g. feat: add Redis cache, Dockerize application, design REST APIs"
-                      className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-xs py-2 px-3 text-slate-100 placeholder-slate-650 focus:outline-none focus:border-emerald-500 transition font-mono"
-                    />
-                  </div>
-
-                  {/* Preset Quick Actions */}
-                  <div>
-                    <span className="block text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Demo Quick Presets:</span>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
-                      <button
-                        onClick={() => {
-                          setCustomCommitMessage("feat: add Redis cache, Dockerize application, design REST APIs");
-                          handleSimulatePush("feat: add Redis cache, Dockerize application, design REST APIs");
-                        }}
-                        disabled={simulating}
-                        className="text-[10px] bg-slate-950 hover:bg-emerald-950/20 border border-slate-800 hover:border-emerald-500/30 text-slate-300 py-1.5 px-2 rounded-lg text-left transition truncate cursor-pointer"
-                      >
-                        🔮 Redis & Docker Stack
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCustomCommitMessage("feat: integrate Gemini LLM models, add Vector Search with Pinecone, use LangChain");
-                          handleSimulatePush("feat: integrate Gemini LLM models, add Vector Search with Pinecone, use LangChain");
-                        }}
-                        disabled={simulating}
-                        className="text-[10px] bg-slate-950 hover:bg-emerald-950/20 border border-slate-800 hover:border-emerald-500/30 text-slate-300 py-1.5 px-2 rounded-lg text-left transition truncate cursor-pointer"
-                      >
-                        🧠 AI & Vector DB Stack
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCustomCommitMessage("refactor: configure AWS EKS cluster, migrate database to PostgreSQL, set up Terraform IAC");
-                          handleSimulatePush("refactor: configure AWS EKS cluster, migrate database to PostgreSQL, set up Terraform IAC");
-                        }}
-                        disabled={simulating}
-                        className="text-[10px] bg-slate-950 hover:bg-emerald-950/20 border border-slate-800 hover:border-emerald-500/30 text-slate-300 py-1.5 px-2 rounded-lg text-left transition truncate cursor-pointer"
-                      >
-                        ☁️ AWS & IaC Kubernetes Stack
-                      </button>
-                      <button
-                        onClick={() => {
-                          setCustomCommitMessage("refactor: modernize client code using Next.js 15, React 19, Tailwind CSS v4 runtime");
-                          handleSimulatePush("refactor: modernize client code using Next.js 15, React 19, Tailwind CSS v4 runtime");
-                        }}
-                        disabled={simulating}
-                        className="text-[10px] bg-slate-950 hover:bg-emerald-950/20 border border-slate-800 hover:border-emerald-500/30 text-slate-300 py-1.5 px-2 rounded-lg text-left transition truncate cursor-pointer"
-                      >
-                        🎨 Premium React Next.js Stack
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleSimulatePush()}
-                    disabled={simulating || !customCommitMessage.trim()}
-                    className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black font-mono text-xs py-2 px-4 rounded-xl flex items-center justify-center gap-2 transition cursor-pointer mt-1"
-                  >
-                    {simulating ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Pushing Webhook Updates...</span>
-                      </>
-                    ) : (
-                      <>
-                        <GitCommit className="w-3.5 h-3.5 text-slate-950" />
-                        <span>git push</span>
-                      </>
-                    )}
                   </button>
                 </div>
               </div>
@@ -2815,10 +2730,10 @@ export default function App() {
                 <Sparkles className="w-8 h-8 text-white" />
               </div>
               <h3 className="font-display font-bold text-3xl text-white mb-3 bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                启用实时简历更新
+                Enable Live Resume Updates
               </h3>
               <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
-                自动为你的所有 GitHub 仓库配置 Webhooks。每次你 push 代码，AI 会自动分析 commit 并更新你的简历！
+                Automatically configure Webhooks for all your GitHub repositories. Every time you push code, AI will analyze your commits and update your resume!
               </p>
             </div>
 
@@ -2826,18 +2741,18 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
               <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 text-center">
                 <GitCommit className="w-6 h-6 text-purple-400 mx-auto mb-2" />
-                <h4 className="text-xs font-semibold text-white mb-1">自动分析</h4>
-                <p className="text-[10px] text-slate-400">AI 分析每个 commit message</p>
+                <h4 className="text-xs font-semibold text-white mb-1">Auto Analysis</h4>
+                <p className="text-[10px] text-slate-400">AI analyzes every commit message</p>
               </div>
               <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 text-center">
                 <RefreshCw className="w-6 h-6 text-cyan-400 mx-auto mb-2" />
-                <h4 className="text-xs font-semibold text-white mb-1">实时更新</h4>
-                <p className="text-[10px] text-slate-400">push 后立即更新简历</p>
+                <h4 className="text-xs font-semibold text-white mb-1">Real-time Updates</h4>
+                <p className="text-[10px] text-slate-400">Resume updates instantly after push</p>
               </div>
               <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 text-center">
                 <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-2" />
-                <h4 className="text-xs font-semibold text-white mb-1">自动配置</h4>
-                <p className="text-[10px] text-slate-400">一键配置所有仓库</p>
+                <h4 className="text-xs font-semibold text-white mb-1">Auto Configuration</h4>
+                <p className="text-[10px] text-slate-400">One-click setup for all repos</p>
               </div>
             </div>
 
@@ -2846,10 +2761,10 @@ export default function App() {
               <div className="mb-6 p-4 bg-emerald-950/20 border border-emerald-800/30 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span className="text-sm font-semibold text-emerald-400">部分仓库已启用</span>
+                  <span className="text-sm font-semibold text-emerald-400">Partially Enabled</span>
                 </div>
                 <p className="text-xs text-emerald-300/70">
-                  当前 {webhookStatus.reposWithWebhook} / {webhookStatus.totalRepos} 个仓库已配置 Webhook ({webhookStatus.coverage}%)
+                  Currently {webhookStatus.reposWithWebhook} / {webhookStatus.totalRepos} repositories have Webhooks configured ({webhookStatus.coverage}%)
                 </p>
               </div>
             )}
@@ -2857,20 +2772,20 @@ export default function App() {
             {/* How it Works */}
             <div className="mb-8 p-5 bg-slate-950/50 border border-slate-800 rounded-xl">
               <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-                <span className="text-purple-400">⚡</span> 工作原理
+                <span className="text-purple-400">⚡</span> How It Works
               </h4>
               <ol className="space-y-2 text-xs text-slate-300">
                 <li className="flex gap-2">
                   <span className="text-purple-400 font-bold">1.</span>
-                  <span>我们将为你的每个仓库自动创建一个 GitHub Webhook</span>
+                  <span>We automatically create a GitHub Webhook for each of your repositories</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-cyan-400 font-bold">2.</span>
-                  <span>每次你 push 代码时，GitHub 会通知我们的 AI 服务器</span>
+                  <span>Every time you push code, GitHub notifies our AI server</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-emerald-400 font-bold">3.</span>
-                  <span>AI 分析你的 commit，提取新技能并自动更新简历</span>
+                  <span>AI analyzes your commits, extracts new skills and automatically updates your resume</span>
                 </li>
               </ol>
             </div>
@@ -2881,7 +2796,7 @@ export default function App() {
                 onClick={() => setShowWebhookModal(false)}
                 className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-3 px-6 rounded-xl transition text-sm"
               >
-                稍后再说
+                Maybe Later
               </button>
               <button
                 onClick={setupWebhooks}
@@ -2891,12 +2806,12 @@ export default function App() {
                 {settingUpWebhook ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    配置中...
+                    Setting up...
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    立即启用
+                    Enable Now
                   </>
                 )}
               </button>
@@ -2905,7 +2820,7 @@ export default function App() {
             {/* Security Note */}
             <div className="mt-6 p-3 bg-slate-900/50 border border-slate-800/50 rounded-lg">
               <p className="text-[10px] text-slate-500 text-center leading-relaxed">
-                🔒 <strong>安全说明</strong>: Webhooks 只会接收 push 事件通知，不会访问你的代码内容。你可以随时在 GitHub 仓库设置中禁用。
+                🔒 <strong>Security Note</strong>: Webhooks only receive push event notifications and will not access your code content. You can disable them anytime in your GitHub repository settings.
               </p>
             </div>
           </div>

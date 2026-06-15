@@ -653,6 +653,12 @@ function generateFallbackResume(username: string, activity: any) {
       databases,
       tools
     },
+    allSkills: {
+      languages: languagesList,
+      frameworks,
+      databases,
+      tools
+    },
     projects,
     openSourceSummary: `Active software contributor with established merge milestones and pull requests.`,
     openSourceContributions: contributions,
@@ -737,6 +743,7 @@ app.post('/api/github/analyze', async (req, res) => {
     issues: [] as any[]
   };
   let displayUsername = '';
+  let githubLogin = ''; // Store the actual GitHub login username
   let userAvatarUrl = '';
   let readmeContent = ''; // Store README content for analysis
 
@@ -756,10 +763,11 @@ app.post('/api/github/analyze', async (req, res) => {
       }
       const userObj = await userRes.json();
       displayUsername = userObj.name || userObj.login || 'GitHub Architect';
+      githubLogin = userObj.login; // Always use login for consistency
       userAvatarUrl = userObj.avatar_url || '';
-      console.log(`[analyze] OAuth user loaded in ${Date.now() - startedAt}ms`);
+      console.log(`[analyze] OAuth user loaded in ${Date.now() - startedAt}ms, login=${githubLogin}, displayName=${displayUsername}`);
 
-      const loginName = userObj.login;
+      const loginName = githubLogin;
       const [reposRes, eventsRes] = await Promise.all([
         fetchWithTimeout('https://api.github.com/user/repos?sort=updated&per_page=15&type=owner', { headers }, GITHUB_TIMEOUT_MS),
         fetchWithTimeout(`https://api.github.com/users/${loginName}/events?per_page=35`, { headers }, GITHUB_TIMEOUT_MS)
@@ -851,6 +859,7 @@ app.post('/api/github/analyze', async (req, res) => {
     } else if (inputUsername) {
       const cleanedUser = inputUsername.trim().replace(/@/g, '');
       console.log(`Querying public GitHub profile: ${cleanedUser}`);
+      githubLogin = cleanedUser; // Store the GitHub login for public scan
 
       // Bypass rate-limiting with developer token if configured
       if (process.env.GITHUB_TOKEN) {
@@ -863,8 +872,9 @@ app.post('/api/github/analyze', async (req, res) => {
       }
       const userObj = await userRes.json();
       displayUsername = userObj.name || userObj.login || cleanedUser;
+      githubLogin = userObj.login || cleanedUser; // Ensure we have the correct login
       userAvatarUrl = userObj.avatar_url || '';
-      console.log(`[analyze] Public user loaded in ${Date.now() - startedAt}ms`);
+      console.log(`[analyze] Public user loaded in ${Date.now() - startedAt}ms, login=${githubLogin}, displayName=${displayUsername}`);
 
       const [reposRes, eventsRes] = await Promise.all([
         fetchWithTimeout(`https://api.github.com/users/${cleanedUser}/repos?sort=updated&per_page=15`, { headers }, GITHUB_TIMEOUT_MS),
@@ -975,6 +985,25 @@ Crucial rules:
   * Development tools (Docker, Webpack, Vite, Jest, Pytest, etc.)
   * Cloud services and APIs (AWS, Stripe, OpenAI, Supabase, Firebase, etc.)
 - Extract technology names exactly as they appear in modern development (e.g., "Next.js" not "nextjs", "PostgreSQL" not "postgres").
+
+IMPORTANT - TWO-TIER TECH STACK STRUCTURE:
+You must return TWO different tech stack lists for each category:
+
+1. "skills" - DISPLAY SKILLS (3-10 items per category):
+   - Only include CORE, MOST IMPORTANT technologies
+   - Prioritize: Main frameworks, databases, cloud platforms, major APIs
+   - EXCLUDE: UI component libraries (Radix UI, Chakra, Material-UI, etc.)
+   - EXCLUDE: Small utilities (date-fns, lodash, axios, etc.)
+   - EXCLUDE: Testing libraries (unless testing is a core skill)
+   - EXCLUDE: Build tools (Webpack, Vite, unless explicitly important)
+   - Examples of what to include: Next.js, React, Django, FastAPI, PostgreSQL, MongoDB, AWS, Docker, Supabase, Stripe, OpenAI
+   - Examples of what to exclude: React Hook Form, Framer Motion, React Dropzone, Zod, date-fns, Recharts
+
+2. "allSkills" - COMPLETE ANALYZED SKILLS (save everything):
+   - Include ALL technologies found in config files
+   - This will be saved to Firebase for user to browse and select
+   - Include component libraries, utilities, testing tools, everything
+   
 - The "techStack" field is a starting point, but you should ENHANCE it by analyzing configFiles.
 - README tech stack should be treated as featured technologies.
 - NEVER invent contact details (location, email, phone, age). Omit the contact object entirely unless real data exists.
@@ -1058,17 +1087,23 @@ Return EXACTLY a JSON format mapping this strict schema:
   "summary": string (a comprehensive 3-sentence summary highlighting their key specializations based on ACTUAL config file analysis, not just guessing),
   "contact": optional object — ONLY include fields with real verified data, never placeholders: { "location"?: string, "email"?: string, "phone"?: string, "website"?: string, "linkedin"?: string, "github"?: string, "age"?: string, "languages"?: string[] },
   "skills": {
-    "languages": string[] (programming languages extracted from repos),
-    "frameworks": string[] (frameworks and UI libraries extracted from config files - be comprehensive!),
-    "databases": string[] (database systems and ORMs extracted from config files),
-    "tools": string[] (development tools, build systems, APIs extracted from config files)
+    "languages": string[] (3-10 CORE programming languages, e.g., ["TypeScript", "Python", "Java"]),
+    "frameworks": string[] (3-10 MOST IMPORTANT frameworks only - EXCLUDE component libraries like Radix UI, Material-UI, React Hook Form, Framer Motion. INCLUDE: React, Next.js, Django, Express, Vue.js),
+    "databases": string[] (3-10 CORE databases and ORMs - INCLUDE: PostgreSQL, MongoDB, Redis, Prisma, Supabase, Firebase),
+    "tools": string[] (3-10 MOST IMPORTANT tools only - EXCLUDE: small utilities, build tools. INCLUDE: Docker, AWS, Kubernetes, Stripe, OpenAI)
+  },
+  "allSkills": {
+    "languages": string[] (ALL programming languages found),
+    "frameworks": string[] (ALL frameworks, libraries, UI components found - be comprehensive! Include React Hook Form, Zod, Framer Motion, Radix UI, etc.),
+    "databases": string[] (ALL databases, ORMs, data tools found),
+    "tools": string[] (ALL tools, utilities, testing libraries, build tools found - include everything: Vite, Webpack, Jest, date-fns, lodash, etc.)
   },
   "projects": [
     {
       "id": string,
       "name": string,
       "role": string,
-      "techStack": string[] (use technologies extracted from that repository's config files!),
+      "techStack": string[] (use CORE technologies extracted from that repository's config files - 3-7 items),
       "description": string[] (3 bullet points referencing specific technologies from the config analysis)
     }
   ],
@@ -1119,7 +1154,8 @@ Return EXACTLY a JSON format mapping this strict schema:
     res.json({
       resume: resumeObj,
       avatarUrl: userAvatarUrl,
-      username: displayUsername
+      username: githubLogin || displayUsername, // Prioritize GitHub login username
+      displayName: displayUsername
     });
 
   } catch (error: any) {
