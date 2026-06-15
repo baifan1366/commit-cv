@@ -122,6 +122,9 @@ export default function App() {
   const [showOpenSource, setShowOpenSource] = useState<boolean>(false);
   const [showSocialMedia, setShowSocialMedia] = useState<boolean>(false);
   const [showFontSettings, setShowFontSettings] = useState<boolean>(false);
+  const [showTechStackManager, setShowTechStackManager] = useState<boolean>(false);
+  const [techStackCategory, setTechStackCategory] = useState<'languages' | 'frameworks' | 'databases' | 'tools'>('languages');
+  const [customTechInput, setCustomTechInput] = useState<string>('');
   const [allUserRepos, setAllUserRepos] = useState<Array<{id: string, name: string, inResume: boolean}>>([]);
   const [savingChat, setSavingChat] = useState<boolean>(false);
   const [chatHistoryLoaded, setChatHistoryLoaded] = useState<boolean>(false);
@@ -168,29 +171,63 @@ export default function App() {
   // Handle incoming postMessages/storage synchronizations from GitHub OAuth Window popup
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
+      console.log('==============================================');
+      console.log('[OAUTH MESSAGE] 📨 Received postMessage event');
+      console.log('[OAUTH MESSAGE] Event type:', event.data?.type);
+      console.log('[OAUTH MESSAGE] Has token:', !!event.data?.token);
+      console.log('==============================================');
+      
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
         const token = event.data.token;
+        console.log('[OAUTH MESSAGE] ✅ OAuth success! Token received');
+        
         setGithubToken(token);
+        console.log('[OAUTH MESSAGE] - setGithubToken() called');
+        
         setIsAuthenticated(true);
-        setOauthLoading(false); // Stop OAuth button loading
+        console.log('[OAUTH MESSAGE] - setIsAuthenticated(true)');
+        
+        setOauthLoading(false);
+        console.log('[OAUTH MESSAGE] - setOauthLoading(false)');
+        
+        console.log('[OAUTH MESSAGE] Calling triggerAnalysis with token...');
         triggerAnalysis(token, null);
       }
     };
 
     const handleStorageChange = (event: StorageEvent) => {
+      console.log('==============================================');
+      console.log('[STORAGE EVENT] 💾 Storage change detected');
+      console.log('[STORAGE EVENT] Key:', event.key);
+      console.log('[STORAGE EVENT] Has newValue:', !!event.newValue);
+      console.log('==============================================');
+      
       if (event.key === 'github_oauth_token' && event.newValue) {
         try {
           const parsed = JSON.parse(event.newValue);
+          console.log('[STORAGE EVENT] Parsed token data, has token:', !!parsed.token);
+          
           if (parsed.token) {
+            console.log('[STORAGE EVENT] ✅ Valid token found in storage');
+            
             setGithubToken(parsed.token);
+            console.log('[STORAGE EVENT] - setGithubToken() called');
+            
             setIsAuthenticated(true);
-            setOauthLoading(false); // Stop OAuth button loading
+            console.log('[STORAGE EVENT] - setIsAuthenticated(true)');
+            
+            setOauthLoading(false);
+            console.log('[STORAGE EVENT] - setOauthLoading(false)');
+            
+            console.log('[STORAGE EVENT] Calling triggerAnalysis with token...');
             triggerAnalysis(parsed.token, null);
+            
             // Clear once retrieved to prevent re-triggering
             localStorage.removeItem('github_oauth_token');
+            console.log('[STORAGE EVENT] - Cleared localStorage token');
           }
         } catch (e) {
-          console.error('Error parsing token from storage:', e);
+          console.error('[STORAGE EVENT] ❌ Error parsing token from storage:', e);
         }
       }
     };
@@ -199,31 +236,42 @@ export default function App() {
     const checkLocalStorageToken = () => {
       const stored = localStorage.getItem('github_oauth_token');
       if (stored) {
+        console.log('[LOCAL STORAGE CHECK] Found token in localStorage');
         try {
           const parsed = JSON.parse(stored);
           if (parsed.token) {
+            console.log('[LOCAL STORAGE CHECK] ✅ Valid token, initiating auth flow');
+            
             setGithubToken(parsed.token);
             setIsAuthenticated(true);
-            setOauthLoading(false); // Stop OAuth button loading
+            setOauthLoading(false);
+            
+            console.log('[LOCAL STORAGE CHECK] Calling triggerAnalysis...');
             triggerAnalysis(parsed.token, null);
+            
             localStorage.removeItem('github_oauth_token');
+            console.log('[LOCAL STORAGE CHECK] - Token cleared from localStorage');
           }
         } catch (e) {
-          console.error('Error parsing token from direct check:', e);
+          console.error('[LOCAL STORAGE CHECK] ❌ Error parsing token:', e);
         }
       }
     };
 
+    console.log('[OAUTH EFFECT] Setting up OAuth listeners');
     window.addEventListener('message', handleOAuthMessage);
     window.addEventListener('storage', handleStorageChange);
 
     // Run custom high-frequency checker for instant OAuth feedback inside sandbox frames
     const checkInterval = setInterval(checkLocalStorageToken, 1000);
+    console.log('[OAUTH EFFECT] Started localStorage polling (1s interval)');
 
     // Initial check on mounting/refreshing
+    console.log('[OAUTH EFFECT] Running initial localStorage check');
     checkLocalStorageToken();
 
     return () => {
+      console.log('[OAUTH EFFECT] Cleanup - removing listeners and interval');
       window.removeEventListener('message', handleOAuthMessage);
       window.removeEventListener('storage', handleStorageChange);
       clearInterval(checkInterval);
@@ -576,58 +624,116 @@ export default function App() {
 
   // Trigger Resume analyzer from server-side using Gemini 3.5 Flash, checking Firestore first (unless forceReload is active)
   const triggerAnalysis = async (token: string | null, username: string | null, forceReload: boolean = false) => {
-    console.log('[triggerAnalysis] Starting analysis:', { token: !!token, username, forceReload });
+    console.log('==============================================');
+    console.log('[triggerAnalysis] 🚀 FUNCTION CALLED');
+    console.log('[triggerAnalysis] Parameters:', { 
+      hasToken: !!token, 
+      username, 
+      forceReload,
+      currentResume: !!resume,
+      currentGithubUsername: githubUsername
+    });
+    console.log('==============================================');
+    
+    console.log('[triggerAnalysis] Step 1: Setting initial states');
     setLoading(true);
+    console.log('[triggerAnalysis] - loading set to TRUE');
     setNewlyAddedSkills([]);
     setAnalysisProgress('Initializing...');
+    console.log('[triggerAnalysis] - analysisProgress set to "Initializing..."');
     
     // Scroll to Resume Portfolio Copilot section if it exists
     setTimeout(() => {
       const portfolioSection = document.querySelector('[data-section="portfolio"]');
+      console.log('[triggerAnalysis] Scroll attempt - portfolio section exists:', !!portfolioSection);
       if (portfolioSection) {
         portfolioSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        console.log('[triggerAnalysis] ✅ Scrolled to portfolio section');
       }
     }, 300);
     
     const targetUsername = username ? username.trim().replace(/@/g, '') : '';
     const cleanUsernameLower = targetUsername.toLowerCase();
-    console.log('[triggerAnalysis] Target username:', targetUsername, 'cleanUsernameLower:', cleanUsernameLower);
+    console.log('[triggerAnalysis] Step 2: Processed username');
+    console.log('[triggerAnalysis] - targetUsername:', targetUsername);
+    console.log('[triggerAnalysis] - cleanUsernameLower:', cleanUsernameLower);
 
     // Check Firestore first
     if (firestoreAvailable && !forceReload && cleanUsernameLower) {
       try {
-        console.log('[triggerAnalysis] Checking Firestore cache...');
+        console.log('[triggerAnalysis] Step 3a: Checking Firestore cache');
+        console.log('[triggerAnalysis] - firestoreAvailable:', firestoreAvailable);
+        console.log('[triggerAnalysis] - forceReload:', forceReload);
         setAnalysisProgress('Checking cached data...');
+        
         const docRef = doc(db, 'resumes', cleanUsernameLower);
+        console.log('[triggerAnalysis] - Firestore document path:', `resumes/${cleanUsernameLower}`);
+        
         const docSnap = await getDoc(docRef);
+        console.log('[triggerAnalysis] - Firestore query result - exists:', docSnap.exists());
+        
         if (docSnap.exists()) {
-          console.log('[triggerAnalysis] Found cached resume in Firestore');
+          console.log('[triggerAnalysis] ✅ FOUND CACHED RESUME IN FIRESTORE');
           const loadedResume = docSnap.data() as CommitCVResume;
-          console.log('[triggerAnalysis] Setting resume state:', loadedResume);
+          console.log('[triggerAnalysis] - Loaded resume name:', loadedResume?.name);
+          console.log('[triggerAnalysis] - Loaded resume projects count:', loadedResume?.projects?.length);
+          
+          console.log('[triggerAnalysis] Step 4a: Setting resume state from cache');
           setResume(loadedResume);
+          console.log('[triggerAnalysis] - setResume() called with cached data');
+          
           setGithubUsername(targetUsername);
-          setChatHistoryLoaded(false); // Reset to allow loading chat history
-          console.log('[triggerAnalysis] Clearing loading states...');
+          console.log('[triggerAnalysis] - setGithubUsername() called:', targetUsername);
+          
+          setChatHistoryLoaded(false);
+          console.log('[triggerAnalysis] - setChatHistoryLoaded(false)');
+          
+          console.log('[triggerAnalysis] Step 5a: Clearing loading states (cache path)');
           setLoading(false);
+          console.log('[triggerAnalysis] - loading set to FALSE');
           setPublicScanLoading(false);
+          console.log('[triggerAnalysis] - publicScanLoading set to FALSE');
           setAnalysisProgress('');
-          console.log('[triggerAnalysis] Done! Resume should now be visible.');
+          console.log('[triggerAnalysis] - analysisProgress cleared');
+          
+          console.log('==============================================');
+          console.log('[triggerAnalysis] ✅ CACHE PATH COMPLETE - Resume should be visible now!');
+          console.log('[triggerAnalysis] Current state should be:');
+          console.log('  - resume: SET (from cache)');
+          console.log('  - loading: false');
+          console.log('  - publicScanLoading: false');
+          console.log('==============================================');
           return;
         } else {
-          console.log('[triggerAnalysis] No cached resume found in Firestore');
+          console.log('[triggerAnalysis] ⚠️ No cached resume found in Firestore - will fetch from API');
         }
       } catch (err) {
+        console.error('[triggerAnalysis] ❌ Firestore cache check failed:', err);
         console.warn("Failed to retrieve cached profile from Firebase Firestore, pulling from live API:", err);
         if ((err as any)?.code === 'permission-denied') {
           setFirestoreAvailable(false);
+          console.log('[triggerAnalysis] - Firestore disabled due to permission error');
         }
       }
+    } else {
+      console.log('[triggerAnalysis] Step 3b: Skipping Firestore cache check');
+      console.log('[triggerAnalysis] - Reasons:', {
+        firestoreAvailable,
+        forceReload,
+        hasUsername: !!cleanUsernameLower
+      });
     }
 
     try {
-      console.log('[triggerAnalysis] Fetching from API...');
+      console.log('[triggerAnalysis] Step 4b: Fetching from API');
       setAnalysisProgress('Fetching GitHub profile...');
+      console.log('[triggerAnalysis] - API endpoint: /api/github/analyze');
+      console.log('[triggerAnalysis] - Request body:', { 
+        hasToken: !!token, 
+        username: targetUsername || null 
+      });
       
+      const fetchStartTime = Date.now();
       const response = await fetch('/api/github/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -636,27 +742,51 @@ export default function App() {
           username: targetUsername || null
         })
       });
+      const fetchEndTime = Date.now();
+      console.log('[triggerAnalysis] - API fetch completed in', (fetchEndTime - fetchStartTime) / 1000, 'seconds');
       
       setAnalysisProgress('Analyzing repositories...');
       
+      const parseStartTime = Date.now();
       const data = await response.json();
-      console.log('[triggerAnalysis] API response:', { ok: response.ok, hasResume: !!data.resume });
+      const parseEndTime = Date.now();
+      console.log('[triggerAnalysis] - JSON parsed in', (parseEndTime - parseStartTime) / 1000, 'seconds');
+      
+      console.log('[triggerAnalysis] Step 5b: API response received');
+      console.log('[triggerAnalysis] - response.ok:', response.ok);
+      console.log('[triggerAnalysis] - has resume data:', !!data.resume);
+      console.log('[triggerAnalysis] - data.username:', data.username);
+      console.log('[triggerAnalysis] - error (if any):', data.error);
       
       if (response.ok && data.resume) {
         setAnalysisProgress('Generating resume...');
-        console.log('[triggerAnalysis] Setting resume from API:', data.resume);
+        console.log('[triggerAnalysis] ✅ API SUCCESS - Resume data received');
+        console.log('[triggerAnalysis] - Resume name:', data.resume.name);
+        console.log('[triggerAnalysis] - Projects count:', data.resume.projects?.length);
+        console.log('[triggerAnalysis] - Skills:', data.resume.skills);
+        
+        console.log('[triggerAnalysis] Step 6b: Setting resume state from API');
         setResume(data.resume);
+        console.log('[triggerAnalysis] - setResume() called with API data');
         
         // Persist to Firestore as the master record
         const finalUsername = (targetUsername || data.username || data.resume.name).trim().replace(/@/g, '');
+        console.log('[triggerAnalysis] - Final username for persistence:', finalUsername);
+        
         if (finalUsername) {
           setGithubUsername(finalUsername);
+          console.log('[triggerAnalysis] - setGithubUsername() called:', finalUsername);
+          
           if (firestoreAvailable) {
             try {
               setAnalysisProgress('Saving to database...');
+              console.log('[triggerAnalysis] - Saving to Firestore...');
+              const saveStartTime = Date.now();
               await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), data.resume);
+              const saveEndTime = Date.now();
+              console.log('[triggerAnalysis] - ✅ Saved to Firestore in', (saveEndTime - saveStartTime) / 1000, 'seconds');
             } catch (firebaseErr: any) {
-              console.error("Failed to sync resume to Firebase Firestore:", firebaseErr);
+              console.error("[triggerAnalysis] ❌ Failed to save to Firestore:", firebaseErr);
               if (firebaseErr?.code === 'permission-denied') {
                 setFirestoreAvailable(false);
               }
@@ -664,27 +794,55 @@ export default function App() {
           }
         }
 
-        setChatHistoryLoaded(false); // Allow chat history to load
-        setAnalysisProgress('Complete!');
+        setChatHistoryLoaded(false);
+        console.log('[triggerAnalysis] - setChatHistoryLoaded(false)');
         
-        console.log('[triggerAnalysis] Analysis complete! Clearing loading states...');
+        setAnalysisProgress('Complete!');
+        console.log('[triggerAnalysis] - analysisProgress set to "Complete!"');
+        
+        console.log('[triggerAnalysis] Step 7b: Scheduling final cleanup');
         
         // Clear progress message after a short delay
         setTimeout(() => {
-          console.log('[triggerAnalysis] Clearing analysisProgress');
+          console.log('[triggerAnalysis] Delayed cleanup - clearing analysisProgress');
           setAnalysisProgress('');
         }, 1000);
+        
+        console.log('==============================================');
+        console.log('[triggerAnalysis] ✅ API PATH COMPLETE - About to clear loading states');
+        console.log('[triggerAnalysis] Next: finally block will execute');
+        console.log('==============================================');
       } else {
+        console.log('[triggerAnalysis] ❌ API response not OK or no resume data');
         throw new Error(data.error || 'Failed to complete resume analysis.');
       }
     } catch (err: any) {
-      console.error('[triggerAnalysis] Error:', err);
+      console.error('[triggerAnalysis] ❌ ERROR in try block:', err);
+      console.error('[triggerAnalysis] Error details:', {
+        message: err.message,
+        stack: err.stack
+      });
       setErrorBanner(err.message || 'Analysis failed. Make sure the username has active repositories, and check if your OpenRouter credentials are fully set up!');
       setAnalysisProgress('');
     } finally {
-      console.log('[triggerAnalysis] Finally block - setting loading to false');
+      console.log('==============================================');
+      console.log('[triggerAnalysis] 🏁 FINALLY BLOCK EXECUTING');
+      console.log('[triggerAnalysis] - Current loading state before change:', loading);
+      console.log('[triggerAnalysis] - Current publicScanLoading before change:', publicScanLoading);
+      
       setLoading(false);
+      console.log('[triggerAnalysis] - ✅ loading set to FALSE');
+      
       setPublicScanLoading(false);
+      console.log('[triggerAnalysis] - ✅ publicScanLoading set to FALSE');
+      
+      console.log('[triggerAnalysis] 🎉 FUNCTION COMPLETE');
+      console.log('[triggerAnalysis] Expected UI state:');
+      console.log('  - resume: should be SET');
+      console.log('  - loading: false');
+      console.log('  - publicScanLoading: false');
+      console.log('  - Should show: Resume workspace (not landing page)');
+      console.log('==============================================');
     }
   };
 
@@ -1294,6 +1452,17 @@ export default function App() {
 
         {!resume ? (
           <div className="w-full flex flex-col items-center">
+            {/* Debug log for rendering decision */}
+            {(() => {
+              console.log('==============================================');
+              console.log('[RENDER DECISION] 🎨 Conditional check: !resume');
+              console.log('[RENDER DECISION] - resume:', resume);
+              console.log('[RENDER DECISION] - resume is falsy, showing LANDING PAGE');
+              console.log('[RENDER DECISION] - loading:', loading);
+              console.log('[RENDER DECISION] - publicScanLoading:', publicScanLoading);
+              console.log('==============================================');
+              return null;
+            })()}
             {/* Section 1 - Hero */}
             <section className="scroll-section hero-section flex flex-col justify-center items-center relative min-h-screen text-center py-12 overflow-hidden w-full">
               {/* Contribution Graph background - using stable memoized cells */}
@@ -1879,6 +2048,18 @@ export default function App() {
         ) : (
           /* Step 2, 3, 4: Main Resume workspace */
           <div className="flex flex-col gap-6 flex-1" data-section="portfolio">
+            {/* Debug log for resume workspace */}
+            {(() => {
+              console.log('==============================================');
+              console.log('[RENDER DECISION] 🎨 Conditional check: resume exists');
+              console.log('[RENDER DECISION] - resume:', !!resume);
+              console.log('[RENDER DECISION] - resume.name:', resume?.name);
+              console.log('[RENDER DECISION] - Showing RESUME WORKSPACE');
+              console.log('[RENDER DECISION] - loading:', loading);
+              console.log('[RENDER DECISION] - analysisProgress:', analysisProgress);
+              console.log('==============================================');
+              return null;
+            })()}
             {/* Analysis Progress Indicator */}
             {(loading || analysisProgress) && (
               <div className="bg-slate-900/80 border border-brand-cyan/50 rounded-xl p-4 shadow-lg backdrop-blur-sm">
@@ -2064,6 +2245,12 @@ export default function App() {
                       className={`text-[10px] ${showFontSettings ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
                     >
                       🔤 Font Settings
+                    </button>
+                    <button
+                      onClick={() => setShowTechStackManager(!showTechStackManager)}
+                      className={`text-[10px] ${showTechStackManager ? 'bg-brand-purple/30 border-brand-purple text-violet-200' : 'bg-slate-950 border-slate-800 text-slate-300'} hover:bg-slate-800 border hover:border-slate-700 py-1 px-3 rounded-lg transition text-left`}
+                    >
+                      🏷️ Manage Tech Stack
                     </button>
                     <button
                       onClick={() => handleSendMessage("Include Docker, Kubernetes, and Cloud Deployments to my tools list")}
@@ -2338,6 +2525,130 @@ export default function App() {
                         <div className="mt-2 bg-slate-900 border border-slate-800 rounded-lg p-2">
                           <p className="text-[9px] text-slate-400 leading-relaxed">
                             Current: <span className="text-brand-cyan font-semibold">{resume?.fontFamily || 'Georgia'}</span> at <span className="text-brand-cyan font-semibold">{resume?.fontSize || '11pt'}</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tech Stack Manager Section - Collapsible */}
+                  {showTechStackManager && (
+                    <div className="mt-3 p-3 bg-slate-950/50 border border-slate-800 rounded-lg space-y-2 animate-fadeIn">
+                      <p className="text-[10px] font-mono text-brand-cyan uppercase tracking-wider">Add Tech Stack Badge</p>
+                      
+                      <div className="space-y-2">
+                        {/* Category Selector */}
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                            Category
+                          </label>
+                          <select
+                            value={techStackCategory}
+                            onChange={(e) => setTechStackCategory(e.target.value as typeof techStackCategory)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 focus:outline-none focus:border-brand-purple"
+                          >
+                            <option value="languages">Languages</option>
+                            <option value="frameworks">Frameworks</option>
+                            <option value="databases">Databases</option>
+                            <option value="tools">Tools</option>
+                          </select>
+                        </div>
+
+                        {/* Display Current Skills in Category */}
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-2">
+                          <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-1.5">
+                            Current {techStackCategory}
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {resume?.skills?.[techStackCategory]?.length > 0 ? (
+                              resume.skills[techStackCategory].map((skill: string) => (
+                                <span
+                                  key={skill}
+                                  className="text-[9px] bg-slate-950 text-slate-300 border border-slate-700 px-2 py-0.5 rounded font-mono"
+                                >
+                                  {skill}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-[9px] text-slate-500 italic">None yet</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Dropdown with All Skills + Custom Input */}
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+                            Select or Add New
+                          </label>
+                          
+                          {/* Combo: Dropdown for existing + Input for custom */}
+                          <div className="flex gap-1.5">
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  handleSendMessage(
+                                    `Add "${e.target.value}" to my ${techStackCategory} skills if it's not already there`
+                                  );
+                                  e.target.value = ''; // Reset dropdown
+                                }
+                              }}
+                              className="flex-1 bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 focus:outline-none focus:border-brand-purple"
+                            >
+                              <option value="">Select existing...</option>
+                              {resume?.allSkills?.[techStackCategory]?.length > 0 ? (
+                                resume.allSkills[techStackCategory]
+                                  .filter((skill: string) => !resume.skills[techStackCategory]?.includes(skill))
+                                  .map((skill: string) => (
+                                    <option key={skill} value={skill}>
+                                      {skill}
+                                    </option>
+                                  ))
+                              ) : (
+                                <option value="" disabled>
+                                  No other skills detected
+                                </option>
+                              )}
+                            </select>
+                          </div>
+
+                          <div className="flex gap-1.5 mt-1">
+                            <input
+                              type="text"
+                              value={customTechInput}
+                              onChange={(e) => setCustomTechInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && customTechInput.trim()) {
+                                  handleSendMessage(
+                                    `Add "${customTechInput.trim()}" to my ${techStackCategory} skills`
+                                  );
+                                  setCustomTechInput('');
+                                }
+                              }}
+                              placeholder="Or type custom skill..."
+                              className="flex-1 bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-1.5 px-2.5 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-brand-purple"
+                            />
+                            <button
+                              onClick={() => {
+                                if (customTechInput.trim()) {
+                                  handleSendMessage(
+                                    `Add "${customTechInput.trim()}" to my ${techStackCategory} skills`
+                                  );
+                                  setCustomTechInput('');
+                                }
+                              }}
+                              disabled={!customTechInput.trim()}
+                              className="shrink-0 text-[10px] bg-brand-purple/20 hover:bg-brand-purple/40 border border-brand-purple/40 text-violet-200 px-3 rounded-lg transition disabled:opacity-50"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Helper Text */}
+                        <div className="bg-slate-900/50 border border-slate-800/50 rounded-lg p-2">
+                          <p className="text-[9px] text-slate-400 leading-relaxed">
+                            💡 <strong>Tip:</strong> Select from detected skills or add custom ones. AI will intelligently add them to your resume.
                           </p>
                         </div>
                       </div>
@@ -2629,7 +2940,7 @@ export default function App() {
                     <span className="font-display font-semibold text-lg text-white">Public Username Scan</span>
                   </div>
                   <p className="text-xs text-slate-400 leading-relaxed mb-6 font-sans">
-                    Enter any public GitHub username (e.g. <code>gaearon</code>, <code>torvalds</code>) to build a resume without authentication.
+                    Enter any public GitHub username (e.g. <code>baifan1366</code>, <code>torvalds</code>) to build a resume without authentication.
                   </p>
                 </div>
                 
@@ -2648,8 +2959,19 @@ export default function App() {
                   />
                   <button
                     onClick={async () => {
+                      console.log('==============================================');
+                      console.log('[PUBLIC SCAN BUTTON] 🔵 Button clicked!');
+                      console.log('[PUBLIC SCAN BUTTON] Username input:', githubUsername);
+                      console.log('[PUBLIC SCAN BUTTON] Current resume state:', !!resume);
+                      console.log('==============================================');
+                      
                       setPublicScanLoading(true);
+                      console.log('[PUBLIC SCAN BUTTON] publicScanLoading set to TRUE');
+                      
+                      console.log('[PUBLIC SCAN BUTTON] Calling triggerAnalysis...');
                       await triggerAnalysis(null, githubUsername);
+                      console.log('[PUBLIC SCAN BUTTON] triggerAnalysis completed');
+                      console.log('==============================================');
                     }}
                     disabled={publicScanLoading || !githubUsername.trim()}
                     className="w-full bg-brand-cyan hover:bg-cyan-500 text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
