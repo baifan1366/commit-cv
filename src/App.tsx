@@ -842,11 +842,20 @@ export default function App() {
         stack: err.stack
       });
       
-      // Set user-friendly error message
+      // Set user-friendly error message based on error type
       let errorMessage = err.message || 'Analysis failed. Please try again.';
       
+      // Check for Vercel timeout error (300 seconds = 5 minutes)
+      if (err.message && (
+        err.message.includes('timed out after 300 seconds') || 
+        err.message.includes('Task timed out') ||
+        err.message.includes('FUNCTION_INVOCATION_TIMEOUT') ||
+        err.message.includes('Vercel Runtime Timeout')
+      )) {
+        errorMessage = `⏱️ Analysis Timeout (5 minutes)\n\n🐌 The free AI model is experiencing high demand and processing is slower than usual. This is a temporary limitation of the free tier.\n\n💡 Suggestions:\n• Try again in a few moments\n• Processing is faster during off-peak hours\n• Consider upgrading to a paid AI model for instant results\n\n✅ Your request was received - just need to retry!`;
+      }
       // Special handling for "no public repositories" error
-      if (err.message && err.message.includes('no public repositories')) {
+      else if (err.message && err.message.includes('no public repositories')) {
         errorMessage = `⚠️ Unable to analyze GitHub profile: This account has no public repositories.\n\nPlease try a different username with public repositories, or make sure the username is correct.`;
       }
       
@@ -2986,7 +2995,12 @@ export default function App() {
           {/* Backdrop blur overlay */}
           <div 
             className="absolute inset-0 bg-slate-950/80 backdrop-blur-md" 
-            onClick={() => setShowTryItOutModal(false)}
+            onClick={() => {
+              // Only allow closing if not loading
+              if (!loading && !publicScanLoading && !oauthLoading) {
+                setShowTryItOutModal(false);
+              }
+            }}
           />
           
           {/* Modal Container */}
@@ -2994,11 +3008,55 @@ export default function App() {
             
             {/* Close Button */}
             <button 
-              onClick={() => setShowTryItOutModal(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 w-8 h-8 flex items-center justify-center rounded-full cursor-pointer border-none text-sm font-bold"
+              onClick={() => {
+                if (!loading && !publicScanLoading && !oauthLoading) {
+                  setShowTryItOutModal(false);
+                }
+              }}
+              disabled={loading || publicScanLoading || oauthLoading}
+              className={`absolute top-4 right-4 text-slate-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 w-8 h-8 flex items-center justify-center rounded-full border-none text-sm font-bold ${
+                (loading || publicScanLoading || oauthLoading) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+              }`}
             >
               ✕
             </button>
+
+            {/* Loading Progress Overlay */}
+            {(loading || publicScanLoading || oauthLoading) && (
+              <div className="mb-6 bg-gradient-to-r from-brand-purple/10 to-brand-cyan/10 border border-brand-cyan/50 rounded-2xl p-6 shadow-lg">
+                <div className="flex items-center gap-4">
+                  <RefreshCw className="w-8 h-8 text-brand-cyan animate-spin shrink-0" />
+                  <div className="flex-1 text-left">
+                    <p className="text-base font-display font-bold text-white mb-2">
+                      {publicScanLoading || loading ? `🔍 Analyzing @${githubUsername}` : '🔐 Authenticating...'}
+                    </p>
+                    <p className="text-sm text-slate-300 font-mono mb-1">{analysisProgress || 'Processing...'}</p>
+                    <div className="mt-3 text-xs text-slate-400">
+                      {analysisProgress === 'Analyzing repositories...' && (
+                        <p>⏳ AI is analyzing your repositories... This may take 2-5 minutes depending on API load.</p>
+                      )}
+                      {analysisProgress === 'Fetching GitHub profile...' && (
+                        <p>📡 Fetching your repositories from GitHub API...</p>
+                      )}
+                      {analysisProgress === 'Generating resume...' && (
+                        <p>✨ AI is crafting your professional resume...</p>
+                      )}
+                      {analysisProgress === 'Saving to database...' && (
+                        <p>💾 Saving your resume for future quick access...</p>
+                      )}
+                      {analysisProgress === 'Checking cached data...' && (
+                        <p>🔍 Looking for cached resume data...</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 bg-slate-950/50 rounded-lg p-3 border border-slate-800">
+                  <p className="text-xs text-slate-400 text-center">
+                    ☕ Grab a coffee - AI analysis takes time to ensure quality results
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="text-center mb-8">
               <h3 className="font-display font-bold text-2xl md:text-3xl text-white mb-2">
@@ -3034,12 +3092,18 @@ export default function App() {
                     value={githubUsername}
                     onChange={(e) => setGithubUsername(e.target.value)}
                     onKeyDown={async (e) => {
-                      if (e.key === 'Enter' && githubUsername.trim()) {
+                      if (e.key === 'Enter' && githubUsername.trim() && !publicScanLoading && !loading) {
+                        console.log('[MODAL INPUT] Enter key pressed, starting analysis');
+                        // Don't close modal, keep it open for progress
+                        setPublicScanLoading(true);
                         await triggerAnalysis(null, githubUsername);
+                        // Close after completion
+                        setShowTryItOutModal(false);
                       }
                     }}
+                    disabled={publicScanLoading || loading}
                     placeholder="Enter GitHub username (e.g. gaearon)"
-                    className="w-full bg-slate-900 border border-slate-800 hover:border-slate-700 p-3 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-cyan transition"
+                    className="w-full bg-slate-900 border border-slate-800 hover:border-slate-700 p-3 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-cyan transition disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <button
                     onClick={async () => {
@@ -3049,12 +3113,19 @@ export default function App() {
                       console.log('[PUBLIC SCAN BUTTON] Current resume state:', !!resume);
                       console.log('==============================================');
                       
+                      // Don't close modal - show loading inside it
+                      console.log('[PUBLIC SCAN BUTTON] Keeping modal open to show progress');
+                      
                       setPublicScanLoading(true);
                       console.log('[PUBLIC SCAN BUTTON] publicScanLoading set to TRUE');
                       
                       console.log('[PUBLIC SCAN BUTTON] Calling triggerAnalysis...');
                       await triggerAnalysis(null, githubUsername);
                       console.log('[PUBLIC SCAN BUTTON] triggerAnalysis completed');
+                      
+                      // Close modal only after analysis completes
+                      setShowTryItOutModal(false);
+                      console.log('[PUBLIC SCAN BUTTON] Modal closed after completion');
                       console.log('==============================================');
                     }}
                     disabled={publicScanLoading || !githubUsername.trim()}
@@ -3089,7 +3160,12 @@ export default function App() {
                 <div className="space-y-3">
                   <button
                     onClick={async () => {
+                      console.log('[OAUTH BUTTON] OAuth button clicked, keeping modal open');
+                      // Don't close modal yet - will close after OAuth completes
+                      setOauthLoading(true);
                       await handleGithubConnect();
+                      // Note: handleGithubConnect will trigger OAuth flow
+                      // Modal will stay open until resume is loaded
                     }}
                     disabled={oauthLoading}
                     className="w-full bg-slate-100 hover:bg-white text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
