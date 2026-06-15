@@ -15,8 +15,8 @@ const firebaseApp = initializeApp(firebaseConfig, 'serverApp');
 const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 const PORT = 3000;
-const GITHUB_TIMEOUT_MS = Number(process.env.GITHUB_TIMEOUT_MS || 12000);
-const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 120000); // 2 minutes default
+const GITHUB_TIMEOUT_MS = Number(process.env.GITHUB_TIMEOUT_MS || 30000); // 30 seconds default
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 300000); // 5 minutes default
 
 type ApiRequest = {
   method?: string;
@@ -410,6 +410,93 @@ function extractTechStackFromReadme(readmeContent: string): string[] {
   return techStack;
 }
 
+// Helper to fetch raw configuration file content
+async function fetchConfigFile(owner: string, repo: string, filename: string, headers: Record<string, string>): Promise<string | null> {
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${filename}`,
+      { headers: { ...headers, 'Accept': 'application/vnd.github.v3.raw' } },
+      GITHUB_TIMEOUT_MS
+    );
+    
+    if (response.ok) {
+      const content = await response.text();
+      console.log(`[DEBUG] Fetched ${filename} for ${owner}/${repo} (${content.length} chars)`);
+      return content;
+    }
+  } catch (error) {
+    console.log(`[DEBUG] Could not fetch ${filename} for ${owner}/${repo}`);
+  }
+  
+  return null;
+}
+
+// Comprehensive repository technology analyzer - fetches raw config files for AI analysis
+async function analyzeRepositoryTechStack(owner: string, repo: string, language: string | null, headers: Record<string, string>): Promise<{ 
+  techStack: string[];
+  configFiles: { [key: string]: string };
+}> {
+  const configFiles: { [key: string]: string } = {};
+  
+  // Fetch relevant config files based on language
+  if (language === 'JavaScript' || language === 'TypeScript') {
+    const packageJson = await fetchConfigFile(owner, repo, 'package.json', headers);
+    if (packageJson) configFiles['package.json'] = packageJson;
+    
+    const tsconfig = await fetchConfigFile(owner, repo, 'tsconfig.json', headers);
+    if (tsconfig) configFiles['tsconfig.json'] = tsconfig;
+  }
+  
+  if (language === 'Python') {
+    const requirements = await fetchConfigFile(owner, repo, 'requirements.txt', headers);
+    if (requirements) configFiles['requirements.txt'] = requirements;
+    
+    const pyproject = await fetchConfigFile(owner, repo, 'pyproject.toml', headers);
+    if (pyproject) configFiles['pyproject.toml'] = pyproject;
+  }
+  
+  if (language === 'Rust') {
+    const cargoToml = await fetchConfigFile(owner, repo, 'Cargo.toml', headers);
+    if (cargoToml) configFiles['Cargo.toml'] = cargoToml;
+  }
+  
+  if (language === 'Go') {
+    const goMod = await fetchConfigFile(owner, repo, 'go.mod', headers);
+    if (goMod) configFiles['go.mod'] = goMod;
+  }
+  
+  if (language === 'Java' || language === 'Kotlin') {
+    const pomXml = await fetchConfigFile(owner, repo, 'pom.xml', headers);
+    if (pomXml) configFiles['pom.xml'] = pomXml;
+    
+    const buildGradle = await fetchConfigFile(owner, repo, 'build.gradle', headers);
+    if (buildGradle) configFiles['build.gradle'] = buildGradle;
+  }
+  
+  if (language === 'Ruby') {
+    const gemfile = await fetchConfigFile(owner, repo, 'Gemfile', headers);
+    if (gemfile) configFiles['Gemfile'] = gemfile;
+  }
+  
+  if (language === 'PHP') {
+    const composerJson = await fetchConfigFile(owner, repo, 'composer.json', headers);
+    if (composerJson) configFiles['composer.json'] = composerJson;
+  }
+  
+  // Always try to fetch Dockerfile and docker-compose
+  const dockerfile = await fetchConfigFile(owner, repo, 'Dockerfile', headers);
+  if (dockerfile) configFiles['Dockerfile'] = dockerfile;
+  
+  const dockerCompose = await fetchConfigFile(owner, repo, 'docker-compose.yml', headers);
+  if (dockerCompose) configFiles['docker-compose.yml'] = dockerCompose;
+  
+  // Return language as initial tech stack (will be enhanced by AI)
+  return {
+    techStack: language ? [language] : [],
+    configFiles
+  };
+}
+
 // --- HIGH-ACCURACY FALLBACK RESUME PARSER (RUNS LOCALLY IF GEMINI IS OVERLOADED) ---
 function generateFallbackResume(username: string, activity: any) {
   const foundLanguages = new Set<string>();
@@ -712,19 +799,47 @@ app.post('/api/github/analyze', async (req, res) => {
           console.log(`[DEBUG] No README repository found for user ${loginName}`);
         }
 
-        // Filter out the user's README repository (username/username)
-        activity.repositories = reposData
-          .filter((r: any) => r.name.toLowerCase() !== loginName.toLowerCase())
-          .map((r: any) => ({
+        // Filter out the user's README repository and analyze tech stack for each repo
+        const filteredRepos = reposData.filter((r: any) => r.name.toLowerCase() !== loginName.toLowerCase());
+        
+        // Analyze tech stack for top repositories (limit to avoid rate limiting)
+        const topRepos = filteredRepos.slice(0, 10);
+        console.log(`[DEBUG] Analyzing tech stack for top ${topRepos.length} repositories...`);
+        
+        const repoTechStackPromises = topRepos.map(async (r: any) => {
+          const analysis = await analyzeRepositoryTechStack(loginName, r.name, r.language, headers);
+          console.log(`[DEBUG] ${r.name}: Found ${Object.keys(analysis.configFiles).length} config files`);
+          return {
             name: r.name,
             description: r.description || null,
             language: r.language || null,
+            techStack: analysis.techStack,
+            configFiles: analysis.configFiles, // Raw config file contents for AI
             stars: r.stargazers_count || 0,
             updatedAt: r.updated_at,
             url: r.html_url
-          }));
+          };
+        });
+        
+        const analyzedTopRepos = await Promise.all(repoTechStackPromises);
+        
+        // For remaining repos, just add basic info without detailed analysis
+        const remainingRepos = filteredRepos.slice(10).map((r: any) => ({
+          name: r.name,
+          description: r.description || null,
+          language: r.language || null,
+          techStack: r.language ? [r.language] : [],
+          configFiles: {},
+          stars: r.stargazers_count || 0,
+          updatedAt: r.updated_at,
+          url: r.html_url
+        }));
+        
+        activity.repositories = [...analyzedTopRepos, ...remainingRepos];
         console.log(`[DEBUG] Filtered repositories count: ${activity.repositories.length}`);
-        console.log(`[DEBUG] Repository details:`, JSON.stringify(activity.repositories, null, 2));
+        console.log(`[DEBUG] Total config files fetched:`, 
+          analyzedTopRepos.reduce((sum, r) => sum + Object.keys(r.configFiles || {}).length, 0)
+        );
       }
 
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
@@ -793,19 +908,47 @@ app.post('/api/github/analyze', async (req, res) => {
           console.log(`[DEBUG] No README repository found for user ${cleanedUser}`);
         }
 
-        // Filter out the user's README repository (username/username)
-        activity.repositories = reposData
-          .filter((r: any) => r.name.toLowerCase() !== cleanedUser.toLowerCase())
-          .map((r: any) => ({
+        // Filter out the user's README repository and analyze tech stack for each repo
+        const filteredRepos = reposData.filter((r: any) => r.name.toLowerCase() !== cleanedUser.toLowerCase());
+        
+        // Analyze tech stack for top repositories (limit to avoid rate limiting)
+        const topRepos = filteredRepos.slice(0, 10);
+        console.log(`[DEBUG] Analyzing tech stack for top ${topRepos.length} repositories...`);
+        
+        const repoTechStackPromises = topRepos.map(async (r: any) => {
+          const analysis = await analyzeRepositoryTechStack(cleanedUser, r.name, r.language, headers);
+          console.log(`[DEBUG] ${r.name}: Found ${Object.keys(analysis.configFiles).length} config files`);
+          return {
             name: r.name,
             description: r.description || null,
             language: r.language || null,
+            techStack: analysis.techStack,
+            configFiles: analysis.configFiles, // Raw config file contents for AI
             stars: r.stargazers_count || 0,
             updatedAt: r.updated_at,
             url: r.html_url
-          }));
+          };
+        });
+        
+        const analyzedTopRepos = await Promise.all(repoTechStackPromises);
+        
+        // For remaining repos, just add basic info without detailed analysis
+        const remainingRepos = filteredRepos.slice(10).map((r: any) => ({
+          name: r.name,
+          description: r.description || null,
+          language: r.language || null,
+          techStack: r.language ? [r.language] : [],
+          configFiles: {},
+          stars: r.stargazers_count || 0,
+          updatedAt: r.updated_at,
+          url: r.html_url
+        }));
+        
+        activity.repositories = [...analyzedTopRepos, ...remainingRepos];
         console.log(`[DEBUG] Filtered repositories count: ${activity.repositories.length}`);
-        console.log(`[DEBUG] Repository details:`, JSON.stringify(activity.repositories, null, 2));
+        console.log(`[DEBUG] Total config files fetched:`, 
+          analyzedTopRepos.reduce((sum, r) => sum + Object.keys(r.configFiles || {}).length, 0)
+        );
       }
 
       const eventsData = eventsRes.ok ? await eventsRes.json() : [];
@@ -821,55 +964,112 @@ app.post('/api/github/analyze', async (req, res) => {
 
     // Now invoke Gemini 3.5 Flash server-side to generate realistic, professional data sets:
     const systemInstruction = `You are a world-class CTO, Lead Technical Recruiter, and AI Developer Portfolio Writer.
-You analyze raw developer activities (a sequence of repositories, description text, language labels, commit changes, merge titles, issue topics) and synthesize a highly professional, elegantly crafted Resume in JSON format.
+You analyze raw developer activities (repositories, configuration files, commit history) and synthesize a highly professional, elegantly crafted Resume in JSON format.
 You highlight real skills. You avoid generic fluffy summaries, and focus on practical impact with active verbs (e.g. "Configured", "Engineered", "Optimized", "Refactored").
 
 Crucial rules:
-- Extract and list exact technologies (languages, frameworks, databases, and tools) discovered from their repos, languages tags, AND their GitHub profile README if available.
-- PRIORITIZE technologies mentioned in the README file as these are often the developer's featured tech stack.
-- NEVER invent contact details (location, email, phone, age). Omit the contact object entirely unless real data exists in the source — users will add these manually.
+- ANALYZE the raw configuration files (package.json, requirements.txt, Cargo.toml, go.mod, etc.) to extract ACTUAL technologies used.
+- Each repository includes a "configFiles" object with raw file contents - analyze these to identify:
+  * Frameworks and libraries (React, Next.js, Django, FastAPI, Express, etc.)
+  * Databases and ORMs (PostgreSQL, MongoDB, Redis, Prisma, SQLAlchemy, etc.)
+  * Development tools (Docker, Webpack, Vite, Jest, Pytest, etc.)
+  * Cloud services and APIs (AWS, Stripe, OpenAI, Supabase, Firebase, etc.)
+- Extract technology names exactly as they appear in modern development (e.g., "Next.js" not "nextjs", "PostgreSQL" not "postgres").
+- The "techStack" field is a starting point, but you should ENHANCE it by analyzing configFiles.
+- README tech stack should be treated as featured technologies.
+- NEVER invent contact details (location, email, phone, age). Omit the contact object entirely unless real data exists.
 - Do NOT include placeholder addresses, fake emails, or labels like "Fully Analyzed Profile".
 - For Projects: select their top 2-3 most relevant coding repositories. Provide 3 high-impact bullets per project describing:
-  1. Primary design characteristics & technologies.
-  2. Concrete developer problem solved or feature implemented based on actual commits, if any (or synthesize reasonable real-world engineering actions).
+  1. Primary design characteristics & technologies from analyzing their actual config files.
+  2. Concrete developer problem solved or feature implemented (synthesize reasonable real-world engineering actions).
   3. Tangible systems optimization or architectural impact.
-- Synthesize an elegant careers slogan aligned to their profile, and a concise technical summary.
+- When categorizing skills:
+  * Languages: Programming languages (TypeScript, Python, Go, Rust, Java, etc.)
+  * Frameworks: Web frameworks, UI libraries (React, Next.js, Django, Express, Vue.js, Spring Boot, etc.)
+  * Databases: Database systems and ORMs (PostgreSQL, MongoDB, Redis, MySQL, Prisma, TypeORM, Supabase, etc.)
+  * Tools: Development tools, testing, build systems (Docker, Jest, Webpack, Vite, AWS, Kubernetes, GitHub Actions, etc.)
+- Synthesize an elegant career slogan and concise technical summary based on their ACTUAL technology usage.
 - Response MUST strictly match the requested JSON schema.`;
 
     const readmeSection = readmeContent 
-      ? `\n\nGitHub Profile README Content (use this as primary tech stack reference):\n${readmeContent}\n`
+      ? `\n\nGitHub Profile README Content (featured technologies):\n${readmeContent}\n`
       : '';
+    
+    // Format repositories with config files for better AI analysis
+    const reposWithConfigSummary = activity.repositories
+      .filter((r: any) => r.configFiles && Object.keys(r.configFiles).length > 0)
+      .map((r: any) => {
+        const configSummary = Object.entries(r.configFiles)
+          .map(([filename, content]) => `--- ${filename} ---\n${content}`)
+          .join('\n\n');
+        
+        return {
+          name: r.name,
+          description: r.description,
+          language: r.language,
+          stars: r.stars,
+          configFiles: configSummary
+        };
+      });
 
     const promptText = `Analyze the live GitHub developer profile and activity data to generate custom Living CV:
+
 Developer Representative Name: ${displayUsername}
 ${readmeSection}
-Repositories List: ${JSON.stringify(activity.repositories)}
+
+=== REPOSITORIES WITH CONFIGURATION FILES (Analyze these carefully!) ===
+${reposWithConfigSummary.length > 0 
+  ? JSON.stringify(reposWithConfigSummary, null, 2)
+  : 'No configuration files available for detailed analysis.'
+}
+
+=== ALL REPOSITORIES SUMMARY ===
+${JSON.stringify(activity.repositories.map((r: any) => ({
+  name: r.name,
+  description: r.description,
+  language: r.language,
+  techStack: r.techStack,
+  stars: r.stars,
+  hasConfigFiles: Object.keys(r.configFiles || {}).length > 0
+})), null, 2)}
+
 Recent Commits Activities: ${JSON.stringify(activity.commits)}
 Recent Pull Requests: ${JSON.stringify(activity.pullRequests)}
 Recent Solved Issues: ${JSON.stringify(activity.issues)}
+
+IMPORTANT INSTRUCTIONS:
+1. CAREFULLY ANALYZE the configuration files (package.json, requirements.txt, etc.) to extract the ACTUAL frameworks, libraries, and tools used.
+2. Look for dependencies, devDependencies, and build configurations.
+3. Extract technology names as they appear in modern development (e.g., "Next.js", "PostgreSQL", "Tailwind CSS").
+4. The "techStack" field is just a starting point - ENHANCE it by analyzing the raw config file contents.
+5. Categorize technologies correctly:
+   - Languages: TypeScript, Python, Go, Rust, Java
+   - Frameworks: React, Next.js, Django, Express, Vue.js, Spring Boot
+   - Databases: PostgreSQL, MongoDB, Redis, Prisma, Supabase, Firebase
+   - Tools: Docker, Webpack, Vite, Jest, AWS, Stripe, OpenAI
 
 Convert these metrics into an organized, industry-grade developer resume structure.
 
 Return EXACTLY a JSON format mapping this strict schema:
 {
   "name": string (defaulting to "${displayUsername}"),
-  "title": string (e.g. "TypeScript Systems Engineer", "Backend Developer", "Front-End Engineer" depending on top tools found),
-  "slogan": string (a custom catchy slogan based on their projects, e.g. "Weaving clean UI architectures"),
-  "summary": string (a comprehensive 3-sentence summary of they key specializations, code characteristics, and systems knowledge),
+  "title": string (e.g. "Full-Stack Engineer (React, Next.js, PostgreSQL)", "Backend Developer (Python, FastAPI, MongoDB)" - include key frameworks from config analysis),
+  "slogan": string (a custom catchy slogan based on their ACTUAL tech stack from config files, e.g. "Building scalable SaaS platforms with Next.js, Supabase, and OpenAI"),
+  "summary": string (a comprehensive 3-sentence summary highlighting their key specializations based on ACTUAL config file analysis, not just guessing),
   "contact": optional object — ONLY include fields with real verified data, never placeholders: { "location"?: string, "email"?: string, "phone"?: string, "website"?: string, "linkedin"?: string, "github"?: string, "age"?: string, "languages"?: string[] },
   "skills": {
-    "languages": string[],
-    "frameworks": string[],
-    "databases": string[],
-    "tools": string[]
+    "languages": string[] (programming languages extracted from repos),
+    "frameworks": string[] (frameworks and UI libraries extracted from config files - be comprehensive!),
+    "databases": string[] (database systems and ORMs extracted from config files),
+    "tools": string[] (development tools, build systems, APIs extracted from config files)
   },
   "projects": [
     {
       "id": string,
       "name": string,
       "role": string,
-      "techStack": string[],
-      "description": string[] (3 bullet points of developer efforts)
+      "techStack": string[] (use technologies extracted from that repository's config files!),
+      "description": string[] (3 bullet points referencing specific technologies from the config analysis)
     }
   ],
   "openSourceSummary": string (e.g., "Active developer with contributions across public repositories"),

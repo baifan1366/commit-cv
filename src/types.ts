@@ -10,6 +10,8 @@ export interface GitHubActivity {
     name: string;
     description: string | null;
     language: string | null;
+    techStack?: string[]; // Initial tech stack from language
+    configFiles?: { [key: string]: string }; // Raw configuration file contents for AI analysis
     stars: number;
     updatedAt: string;
     url: string;

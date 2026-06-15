@@ -51,6 +51,9 @@ export default function App() {
   const [githubToken, setGithubToken] = useState<string>('');
   const [githubUsername, setGithubUsername] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [oauthLoading, setOauthLoading] = useState<boolean>(false);
+  const [publicScanLoading, setPublicScanLoading] = useState<boolean>(false);
+  const [analysisProgress, setAnalysisProgress] = useState<string>('');
   const [resume, setResume] = useState<CommitCVResume | null>(null);
   
   const [currentView, setCurrentView] = useState<'cv' | 'coach'>('cv');
@@ -169,6 +172,7 @@ export default function App() {
         const token = event.data.token;
         setGithubToken(token);
         setIsAuthenticated(true);
+        setOauthLoading(false); // Stop OAuth button loading
         triggerAnalysis(token, null);
       }
     };
@@ -180,6 +184,7 @@ export default function App() {
           if (parsed.token) {
             setGithubToken(parsed.token);
             setIsAuthenticated(true);
+            setOauthLoading(false); // Stop OAuth button loading
             triggerAnalysis(parsed.token, null);
             // Clear once retrieved to prevent re-triggering
             localStorage.removeItem('github_oauth_token');
@@ -199,6 +204,7 @@ export default function App() {
           if (parsed.token) {
             setGithubToken(parsed.token);
             setIsAuthenticated(true);
+            setOauthLoading(false); // Stop OAuth button loading
             triggerAnalysis(parsed.token, null);
             localStorage.removeItem('github_oauth_token');
           }
@@ -538,7 +544,7 @@ export default function App() {
   const handleGithubConnect = async () => {
     setErrorBanner(null);
     try {
-      setLoading(true);
+      setOauthLoading(true);
       const res = await fetch('/api/auth/github/url');
       const data = await res.json();
       if (data.url) {
@@ -554,15 +560,17 @@ export default function App() {
         );
         if (!win) {
           setErrorBanner("Popup blocked! Your browser blocked the GitHub Sign-In Popup because it is running inside an iframe. Please allow popups for this page, or open the app in a new tab via the 'Development App URL' link at the top!");
+          setOauthLoading(false);
         }
+        // Note: OAuth loading state will be cleared when message is received
       } else {
         setErrorBanner(data.error || 'GitHub OAuth variables not configured. Please use the "Public Username Scan" on the left, or add GITHUB_CLIENT_ID to your secrets!');
+        setOauthLoading(false);
       }
     } catch (err) {
       console.error(err);
       setErrorBanner('Failed to initialize OAuth. Please use the "Public Username Scan" instead, or check the developer console.');
-    } finally {
-      setLoading(false);
+      setOauthLoading(false);
     }
   };
 
@@ -570,6 +578,15 @@ export default function App() {
   const triggerAnalysis = async (token: string | null, username: string | null, forceReload: boolean = false) => {
     setLoading(true);
     setNewlyAddedSkills([]);
+    setAnalysisProgress('Initializing...');
+    
+    // Scroll to Resume Portfolio Copilot section if it exists
+    setTimeout(() => {
+      const portfolioSection = document.querySelector('[data-section="portfolio"]');
+      if (portfolioSection) {
+        portfolioSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 300);
     
     const targetUsername = username ? username.trim().replace(/@/g, '') : '';
     const cleanUsernameLower = targetUsername.toLowerCase();
@@ -577,6 +594,7 @@ export default function App() {
     // Check Firestore first
     if (firestoreAvailable && !forceReload && cleanUsernameLower) {
       try {
+        setAnalysisProgress('Checking cached data...');
         const docRef = doc(db, 'resumes', cleanUsernameLower);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
@@ -585,6 +603,8 @@ export default function App() {
           setGithubUsername(targetUsername);
           setChatHistoryLoaded(false); // Reset to allow loading chat history
           setLoading(false);
+          setPublicScanLoading(false);
+          setAnalysisProgress('');
           return;
         }
       } catch (err) {
@@ -596,6 +616,8 @@ export default function App() {
     }
 
     try {
+      setAnalysisProgress('Fetching GitHub profile...');
+      
       const response = await fetch('/api/github/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -604,8 +626,12 @@ export default function App() {
           username: targetUsername || null
         })
       });
+      
+      setAnalysisProgress('Analyzing repositories...');
+      
       const data = await response.json();
       if (response.ok && data.resume) {
+        setAnalysisProgress('Generating resume...');
         setResume(data.resume);
         
         // Persist to Firestore as the master record
@@ -614,6 +640,7 @@ export default function App() {
           setGithubUsername(finalUsername);
           if (firestoreAvailable) {
             try {
+              setAnalysisProgress('Saving to database...');
               await setDoc(doc(db, 'resumes', finalUsername.toLowerCase()), data.resume);
             } catch (firebaseErr: any) {
               console.error("Failed to sync resume to Firebase Firestore:", firebaseErr);
@@ -625,14 +652,20 @@ export default function App() {
         }
 
         setChatHistoryLoaded(false); // Allow chat history to load
+        setAnalysisProgress('Complete!');
+        
+        // Clear progress message after a short delay
+        setTimeout(() => setAnalysisProgress(''), 1000);
       } else {
         throw new Error(data.error || 'Failed to complete resume analysis.');
       }
     } catch (err: any) {
       console.error(err);
       setErrorBanner(err.message || 'Analysis failed. Make sure the username has active repositories, and check if your OpenRouter credentials are fully set up!');
+      setAnalysisProgress('');
     } finally {
       setLoading(false);
+      setPublicScanLoading(false);
     }
   };
 
@@ -1816,7 +1849,20 @@ export default function App() {
           </div>
         ) : (
           /* Step 2, 3, 4: Main Resume workspace */
-          <div className="flex flex-col gap-6 flex-1">
+          <div className="flex flex-col gap-6 flex-1" data-section="portfolio">
+            
+            {/* Analysis Progress Indicator */}
+            {(loading || analysisProgress) && (
+              <div className="bg-slate-900/80 border border-brand-cyan/50 rounded-xl p-4 shadow-lg backdrop-blur-sm">
+                <div className="flex items-center gap-3">
+                  <RefreshCw className="w-5 h-5 text-brand-cyan animate-spin" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-white mb-1">Analyzing GitHub Profile</p>
+                    <p className="text-xs text-slate-400 font-mono">{analysisProgress || 'Processing...'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* Beautiful Navigation Tabs inside Dashboard Workspace */}
             <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-4 gap-3">
@@ -2687,12 +2733,13 @@ export default function App() {
                   />
                   <button
                     onClick={async () => {
+                      setPublicScanLoading(true);
                       await triggerAnalysis(null, githubUsername);
                     }}
-                    disabled={loading || !githubUsername.trim()}
+                    disabled={publicScanLoading || !githubUsername.trim()}
                     className="w-full bg-brand-cyan hover:bg-cyan-500 text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
                   >
-                    {loading ? (
+                    {publicScanLoading ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <>
@@ -2723,10 +2770,10 @@ export default function App() {
                     onClick={async () => {
                       await handleGithubConnect();
                     }}
-                    disabled={loading}
+                    disabled={oauthLoading}
                     className="w-full bg-slate-100 hover:bg-white text-slate-950 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50 text-xs cursor-pointer"
                   >
-                    {loading ? (
+                    {oauthLoading ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <>
